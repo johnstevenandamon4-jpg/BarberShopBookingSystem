@@ -5,16 +5,12 @@ import './App.css'
 
 const API_URL = 'http://127.0.0.1:8000/api'
 
-// Reusable hook for saving and restoring non-sensitive form drafts.
-// We can reuse this for appointment and admin forms when they are added.
+// Reusable hook for remembering non-sensitive form drafts.
 function useDraftState(storageKey, initialValue) {
   const [value, setValue] = useState(() => {
     try {
       const savedValue = localStorage.getItem(storageKey)
-
-      return savedValue !== null
-        ? JSON.parse(savedValue)
-        : initialValue
+      return savedValue !== null ? JSON.parse(savedValue) : initialValue
     } catch {
       return initialValue
     }
@@ -24,7 +20,7 @@ function useDraftState(storageKey, initialValue) {
     try {
       localStorage.setItem(storageKey, JSON.stringify(value))
     } catch {
-      // The application can still work if browser storage is unavailable.
+      // Continue working if browser storage is unavailable.
     }
   }, [storageKey, value])
 
@@ -51,7 +47,6 @@ function App() {
   const [servicesLoading, setServicesLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Remember the login screen and unfinished email.
   const [showLogin, setShowLogin] = useDraftState(
     'barberbook_login_open',
     false
@@ -61,13 +56,24 @@ function App() {
     ''
   )
 
-  // Never save the password in browser storage.
   const [password, setPassword] = useState('')
-
   const [user, setUser] = useState(null)
   const [loginError, setLoginError] = useState('')
   const [loginMessage, setLoginMessage] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
+
+  // Start at the top when the application is first loaded or refreshed.
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual'
+    }
+
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: 'auto',
+    })
+  }, [])
 
   // Load barbers independently.
   useEffect(() => {
@@ -137,7 +143,7 @@ function App() {
     return () => controller.abort()
   }, [servicePage])
 
-  // Restore the existing authenticated session.
+  // Restore the existing login session.
   useEffect(() => {
     async function restoreLogin() {
       const savedToken = localStorage.getItem('barber_token')

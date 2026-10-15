@@ -142,7 +142,11 @@
   height: 115px;
   border: 3px solid white;
   border-radius: 20px;
-  background: repeating-linear-gradient(135deg, #c5f36a 0 12px, white 12px 24px);
+  background: repeating-linear-gradient(
+    135deg,
+    #c5f36a 0 12px,
+    white 12px 24px
+  );
 }
 
 .section {
@@ -427,7 +431,7 @@ footer {
   }
 }
 
-
+/* Pagination controls */
 .pagination-controls {
   display: flex;
   align-items: center;
@@ -454,4 +458,18 @@ footer {
 .pagination-controls span {
   color: #686e67;
   font-size: 0.9rem;
+}
+
+/* Navigation and scroll behavior */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 90px;
+}
+
+#home,
+#services,
+#barbers,
+#booking,
+#login {
+  scroll-margin-top: 90px;
 }
