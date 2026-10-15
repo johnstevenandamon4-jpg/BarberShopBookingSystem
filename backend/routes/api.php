@@ -5,19 +5,21 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BarberController;
 use App\Http\Controllers\Api\ServiceController;
 use App\Http\Controllers\Api\AppointmentController;
+use App\Http\Controllers\Api\AdminDashboardController;
 
 // Public authentication routes
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
-// Public read-only routes
+// Public read-only barber routes
 Route::get('/barbers', [BarberController::class, 'index']);
 Route::get('/barbers/{barber}', [BarberController::class, 'show']);
 
+// Public read-only service routes
 Route::get('/services', [ServiceController::class, 'index']);
 Route::get('/services/{service}', [ServiceController::class, 'show']);
 
-// Authenticated routes
+// Routes requiring authentication
 Route::middleware('auth:sanctum')->group(function () {
     // Authentication
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -26,11 +28,20 @@ Route::middleware('auth:sanctum')->group(function () {
     // Appointment management
     Route::apiResource('appointments', AppointmentController::class);
 
-    // Barber management
-    Route::apiResource('barbers', BarberController::class)
-        ->except(['index', 'show']);
+    // Administrator-only routes
+    Route::middleware('admin')->group(function () {
+        // Dashboard statistics
+        Route::get('/admin/dashboard', [
+            AdminDashboardController::class,
+            'index',
+        ]);
 
-    // Service management
-    Route::apiResource('services', ServiceController::class)
-        ->except(['index', 'show']);
+        // Barber management
+        Route::apiResource('barbers', BarberController::class)
+            ->except(['index', 'show']);
+
+        // Service management
+        Route::apiResource('services', ServiceController::class)
+            ->except(['index', 'show']);
+    });
 });
