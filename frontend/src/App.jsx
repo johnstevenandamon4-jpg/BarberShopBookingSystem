@@ -1,10 +1,8 @@
-
 import { useEffect, useState } from 'react'
 import axios from 'axios'
 import './App.css'
 
 const API_URL = 'http://127.0.0.1:8000/api'
-
 const GMAIL_PATTERN = /^[A-Z0-9]+(?:\.[A-Z0-9]+)*@gmail\.com$/i
 
 function getRoleLabel(role) {
@@ -15,7 +13,6 @@ function getRoleLabel(role) {
 
 function getRoleBadgeStyle(role) {
   const isAdmin = role === 'admin'
-
   return {
     display: 'inline-block',
     padding: '5px 10px',
@@ -99,11 +96,14 @@ function useSessionDraftState(storageKey, initialValue) {
 function App() {
   const [barbers, setBarbers] = useState([])
   const [services, setServices] = useState([])
+  const [dashboardData, setDashboardData] = useState(null)
+  const [dashboardError, setDashboardError] = useState('')
 
   const [barberPage, setBarberPage] = useDraftState(
     'barberbook_barber_page',
     1
   )
+
   const [servicePage, setServicePage] = useDraftState(
     'barberbook_service_page',
     1
@@ -120,6 +120,7 @@ function App() {
     'barberbook_login_open',
     false
   )
+
   const [email, setEmail] = useDraftState('barberbook_login_email', '')
   const [password, setPassword] = useSessionDraftState(
     'barberbook_login_password',
@@ -246,6 +247,40 @@ function App() {
     void restoreLogin()
   }, [])
 
+  // Load administrator dashboard data.
+  useEffect(() => {
+    if (user?.role !== 'admin') {
+      setDashboardData(null)
+      setDashboardError('')
+      return
+    }
+
+    const controller = new AbortController()
+
+    async function loadDashboard() {
+      setDashboardError('')
+
+      try {
+        const response = await axios.get(`${API_URL}/admin/dashboard`, {
+          signal: controller.signal,
+        })
+
+        setDashboardData(response.data)
+      } catch (err) {
+        if (!axios.isCancel(err)) {
+          setDashboardError(
+            err.response?.data?.message ||
+              'Unable to load administrator dashboard data.'
+          )
+        }
+      }
+    }
+
+    void loadDashboard()
+
+    return () => controller.abort()
+  }, [user?.id, user?.role])
+
   // Reset stale booking messages when the account changes.
   useEffect(() => {
     setBookingError('')
@@ -273,7 +308,9 @@ function App() {
     const trimmedEmail = email.trim()
 
     if (!GMAIL_PATTERN.test(trimmedEmail)) {
-      setLoginError('Please enter a valid Gmail address ending in @gmail.com.')
+      setLoginError(
+        'Please enter a valid Gmail address ending in @gmail.com.'
+      )
       return
     }
 
@@ -430,12 +467,14 @@ function App() {
           >
             Services
           </a>
+
           <a
             href="#barbers"
             onClick={(event) => scrollToSection('barbers', event)}
           >
             Our Barbers
           </a>
+
           <a
             href="#booking"
             onClick={(event) => scrollToSection('booking', event)}
@@ -447,9 +486,11 @@ function App() {
         {user ? (
           <div className="account-actions">
             <span>Hi, {user.name}</span>
+
             <span style={getRoleBadgeStyle(user.role)}>
               {getRoleLabel(user.role)}
             </span>
+
             <button className="nav-button" onClick={handleLogout}>
               Logout
             </button>
@@ -562,6 +603,7 @@ function App() {
             <p className="eyebrow">YOUR ACCOUNT</p>
             <h2>Welcome, {user.name}!</h2>
             <p>Email: {user.email}</p>
+
             <p>
               Account type:{' '}
               <span style={getRoleBadgeStyle(user.role)}>
@@ -572,9 +614,11 @@ function App() {
             {user.role === 'admin' && (
               <p>You are logged in with an administrator account.</p>
             )}
+
             {user.role === 'customer' && (
               <p>You are logged in with a customer account.</p>
             )}
+
             {!user.role && (
               <p>
                 Your account role was not returned by the server. Please check
@@ -586,6 +630,204 @@ function App() {
           </section>
         )}
 
+        {/* Administrator dashboard */}
+        {user?.role === 'admin' && (
+          <section
+            className="section"
+            id="admin-dashboard"
+            style={{ paddingTop: '36px' }}
+          >
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">ADMINISTRATION</p>
+                <h2>Administrator Dashboard</h2>
+              </div>
+
+              <button
+                className="nav-button"
+                type="button"
+                onClick={async () => {
+                  setDashboardError('')
+
+                  try {
+                    const response = await axios.get(
+                      `${API_URL}/admin/dashboard`
+                    )
+                    setDashboardData(response.data)
+                  } catch (err) {
+                    setDashboardError(
+                      err.response?.data?.message ||
+                        'Unable to load administrator dashboard data.'
+                    )
+                  }
+                }}
+              >
+                Refresh Data
+              </button>
+            </div>
+
+            {dashboardError && (
+              <p className="error-message" role="alert">
+                {dashboardError}
+              </p>
+            )}
+
+            {!dashboardData && !dashboardError && (
+              <p>Loading dashboard data...</p>
+            )}
+
+            {dashboardData && (
+              <>
+                <div
+                  className="service-grid"
+                  style={{
+                    gridTemplateColumns:
+                      'repeat(auto-fit, minmax(150px, 1fr))',
+                  }}
+                >
+                  {[
+                    [
+                      'Total Bookings',
+                      dashboardData.summary?.total_bookings,
+                    ],
+                    ['Pending', dashboardData.summary?.pending_bookings],
+                    ['Confirmed', dashboardData.summary?.confirmed_bookings],
+                    ['Completed', dashboardData.summary?.completed_bookings],
+                    ['Cancelled', dashboardData.summary?.cancelled_bookings],
+                    ['No-Shows', dashboardData.summary?.no_show_bookings],
+                  ].map(([label, value]) => (
+                    <article className="service-card" key={label}>
+                      <p>{label}</p>
+                      <h3 style={{ fontSize: '28px', margin: '8px 0 0' }}>
+                        {value ?? 0}
+                      </h3>
+                    </article>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: '32px' }}>
+                  <h3>Bookings by Barber</h3>
+
+                  {dashboardData.bookings_by_barber?.length ? (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table
+                        style={{
+                          width: '100%',
+                          borderCollapse: 'collapse',
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Barber
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Total Bookings
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Availability
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {dashboardData.bookings_by_barber.map((barber) => (
+                            <tr key={barber.id}>
+                              <td style={{ padding: '12px' }}>
+                                {barber.name}
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                {barber.appointments_count}
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                {barber.is_available
+                                  ? 'Available'
+                                  : 'Unavailable'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p>No barber booking data available.</p>
+                  )}
+                </div>
+
+                <div style={{ marginTop: '32px' }}>
+                  <h3>Recent Appointments</h3>
+
+                  {dashboardData.recent_appointments?.length ? (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table
+                        style={{
+                          width: '100%',
+                          borderCollapse: 'collapse',
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Customer
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Barber
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Service
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Date
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Time
+                            </th>
+                            <th style={{ textAlign: 'left', padding: '12px' }}>
+                              Status
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {dashboardData.recent_appointments.map(
+                            (appointment) => (
+                              <tr key={appointment.id}>
+                                <td style={{ padding: '12px' }}>
+                                  {appointment.customer?.name || 'Unknown'}
+                                  {appointment.customer?.email && (
+                                    <div>{appointment.customer.email}</div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '12px' }}>
+                                  {appointment.barber?.name || '—'}
+                                </td>
+                                <td style={{ padding: '12px' }}>
+                                  {appointment.service?.name || '—'}
+                                </td>
+                                <td style={{ padding: '12px' }}>
+                                  {appointment.appointment_date || '—'}
+                                </td>
+                                <td style={{ padding: '12px' }}>
+                                  {appointment.appointment_time || '—'}
+                                </td>
+                                <td style={{ padding: '12px' }}>
+                                  {appointment.status || '—'}
+                                </td>
+                              </tr>
+                            )
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p>No appointments have been recorded yet.</p>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
         {loginMessage && (
           <p className="success-message">{loginMessage}</p>
         )}
@@ -593,11 +835,13 @@ function App() {
         <section className="hero" id="home">
           <div className="hero-content">
             <p className="eyebrow">YOUR STYLE, OUR CRAFT</p>
+
             <h1>
               A Fresh Cut.
               <br />
               <span>A Better You.</span>
             </h1>
+
             <p className="hero-description">
               Find your barber, choose your service, and book your next visit
               with ease.
@@ -637,6 +881,7 @@ function App() {
               <p className="eyebrow">WHAT WE OFFER</p>
               <h2>Our Services</h2>
             </div>
+
             <p>Quality grooming for every style.</p>
           </div>
 
@@ -649,9 +894,11 @@ function App() {
                   <article className="service-card" key={service.id}>
                     <div className="service-icon">✂</div>
                     <h3>{service.name}</h3>
+
                     <p>
                       {service.description || 'Professional barber service.'}
                     </p>
+
                     <div className="service-bottom">
                       <strong>₱{Number(service.price).toFixed(2)}</strong>
                       <span>{service.duration_minutes} min</span>
@@ -670,10 +917,12 @@ function App() {
                   >
                     Previous
                   </button>
+
                   <span>
                     Page {servicePagination.current_page} of{' '}
                     {servicePagination.last_page}
                   </span>
+
                   <button
                     onClick={() =>
                       setServicePage((page) =>
@@ -699,6 +948,7 @@ function App() {
               <p className="eyebrow">MEET THE TEAM</p>
               <h2>Our Barbers</h2>
             </div>
+
             <p>Experienced hands. Sharp results.</p>
           </div>
 
@@ -712,6 +962,7 @@ function App() {
                     <div className="barber-avatar">
                       {barber.name.charAt(0)}
                     </div>
+
                     <h3>{barber.name}</h3>
                     <p>{barber.description || 'Professional barber'}</p>
 
@@ -740,10 +991,12 @@ function App() {
                   >
                     Previous
                   </button>
+
                   <span>
                     Page {barberPagination.current_page} of{' '}
                     {barberPagination.last_page}
                   </span>
+
                   <button
                     onClick={() =>
                       setBarberPage((page) =>
@@ -783,6 +1036,7 @@ function App() {
               >
                 Customer Login →
               </button>
+
               <button
                 className="primary-button"
                 onClick={() => openLogin('admin')}
@@ -793,7 +1047,9 @@ function App() {
           )}
 
           {user?.role === 'admin' && (
-            <p>Administrator accounts cannot create customer bookings here.</p>
+            <p>
+              Administrator accounts cannot create customer bookings here.
+            </p>
           )}
 
           {user?.role === 'customer' && (
@@ -811,6 +1067,7 @@ function App() {
 
               <form onSubmit={handleBooking} noValidate>
                 <label htmlFor="booking-barber">Choose a Barber</label>
+
                 <select
                   id="booking-barber"
                   value={bookingBarberId}
@@ -818,6 +1075,7 @@ function App() {
                   required
                 >
                   <option value="">Select a barber</option>
+
                   {barbers
                     .filter((barber) => barber.is_available)
                     .map((barber) => (
@@ -828,6 +1086,7 @@ function App() {
                 </select>
 
                 <label htmlFor="booking-service">Choose a Service</label>
+
                 <select
                   id="booking-service"
                   value={bookingServiceId}
@@ -835,6 +1094,7 @@ function App() {
                   required
                 >
                   <option value="">Select a service</option>
+
                   {services.map((service) => (
                     <option key={service.id} value={service.id}>
                       {service.name} — ₱{Number(service.price).toFixed(2)}
@@ -843,6 +1103,7 @@ function App() {
                 </select>
 
                 <label htmlFor="booking-date">Appointment Date</label>
+
                 <input
                   id="booking-date"
                   type="date"
@@ -853,6 +1114,7 @@ function App() {
                 />
 
                 <label htmlFor="booking-time">Appointment Time</label>
+
                 <input
                   id="booking-time"
                   type="time"
@@ -862,6 +1124,7 @@ function App() {
                 />
 
                 <label htmlFor="booking-notes">Notes (Optional)</label>
+
                 <textarea
                   id="booking-notes"
                   value={bookingNotes}
@@ -906,6 +1169,7 @@ function App() {
         >
           BARBER<span>BOOK</span>
         </a>
+
         <p>Barber Shop Booking System · Student Project</p>
       </footer>
     </div>
