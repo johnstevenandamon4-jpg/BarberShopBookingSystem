@@ -13,6 +13,7 @@ function getRoleLabel(role) {
 
 function getRoleBadgeStyle(role) {
   const isAdmin = role === 'admin'
+
   return {
     display: 'inline-block',
     padding: '5px 10px',
@@ -29,22 +30,14 @@ function scrollToSection(sectionId, event) {
   event?.preventDefault()
 
   if (sectionId === 'home') {
-    window.scrollTo({
-      top: 0,
-      left: 0,
-      behavior: 'smooth',
-    })
+    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
     return
   }
 
-  const section = document.getElementById(sectionId)
-
-  if (section) {
-    section.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    })
-  }
+  document.getElementById(sectionId)?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start',
+  })
 }
 
 function useDraftState(storageKey, initialValue) {
@@ -93,17 +86,75 @@ function useSessionDraftState(storageKey, initialValue) {
   return [value, setValue]
 }
 
+function formatAppointmentDate(dateValue) {
+  if (!dateValue) return '—'
+
+  // Handle a date-only value without introducing a timezone shift.
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateValue)
+
+  if (match) {
+    const [, year, month, day] = match
+    const date = new Date(Number(year), Number(month) - 1, Number(day))
+
+    return date.toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
+
+  const date = new Date(dateValue)
+
+  if (Number.isNaN(date.getTime())) return dateValue
+
+  return date.toLocaleDateString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function formatAppointmentTime(timeValue) {
+  if (!timeValue) return '—'
+
+  const match = /^(\d{1,2}):(\d{2})/.exec(timeValue)
+
+  if (!match) return timeValue
+
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+
+  if (hours > 23 || minutes > 59) return timeValue
+
+  const date = new Date()
+  date.setHours(hours, minutes, 0, 0)
+
+  return date.toLocaleTimeString('en-PH', {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatStatus(status) {
+  if (!status) return '—'
+
+  return status
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
 function App() {
   const [barbers, setBarbers] = useState([])
   const [services, setServices] = useState([])
   const [dashboardData, setDashboardData] = useState(null)
   const [dashboardError, setDashboardError] = useState('')
+  const [dashboardLoading, setDashboardLoading] = useState(false)
 
   const [barberPage, setBarberPage] = useDraftState(
     'barberbook_barber_page',
     1
   )
-
   const [servicePage, setServicePage] = useDraftState(
     'barberbook_service_page',
     1
@@ -111,7 +162,6 @@ function App() {
 
   const [barberPagination, setBarberPagination] = useState(null)
   const [servicePagination, setServicePagination] = useState(null)
-
   const [barbersLoading, setBarbersLoading] = useState(true)
   const [servicesLoading, setServicesLoading] = useState(true)
   const [error, setError] = useState('')
@@ -120,7 +170,6 @@ function App() {
     'barberbook_login_open',
     false
   )
-
   const [email, setEmail] = useDraftState('barberbook_login_email', '')
   const [password, setPassword] = useSessionDraftState(
     'barberbook_login_password',
@@ -133,7 +182,6 @@ function App() {
   const [loginMessage, setLoginMessage] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
-  // Appointment booking state.
   const [bookingBarberId, setBookingBarberId] = useState('')
   const [bookingServiceId, setBookingServiceId] = useState('')
   const [bookingDate, setBookingDate] = useState('')
@@ -146,25 +194,22 @@ function App() {
   const loginButtonText =
     loginType === 'admin' ? 'Login as Admin' : 'Login as Customer'
 
+  const isAdmin = user?.role === 'admin'
+
   useEffect(() => {
     if ('scrollRestoration' in window.history) {
       window.history.scrollRestoration = 'manual'
     }
 
-    window.scrollTo({
-      top: 0,
-      left: 0,
-      behavior: 'instant',
-    })
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
   }, [])
 
-  // Load barbers.
+  // Load public barber information.
   useEffect(() => {
     const controller = new AbortController()
 
     async function loadBarbers() {
       setBarbersLoading(true)
-      setError('')
 
       try {
         const response = await axios.get(
@@ -188,17 +233,15 @@ function App() {
     }
 
     void loadBarbers()
-
     return () => controller.abort()
   }, [barberPage])
 
-  // Load services.
+  // Load public service information.
   useEffect(() => {
     const controller = new AbortController()
 
     async function loadServices() {
       setServicesLoading(true)
-      setError('')
 
       try {
         const response = await axios.get(
@@ -222,11 +265,10 @@ function App() {
     }
 
     void loadServices()
-
     return () => controller.abort()
   }, [servicePage])
 
-  // Restore the login session.
+  // Restore an existing login session.
   useEffect(() => {
     async function restoreLogin() {
       const savedToken = localStorage.getItem('barber_token')
@@ -247,17 +289,19 @@ function App() {
     void restoreLogin()
   }, [])
 
-  // Load administrator dashboard data.
+  // Load dashboard data only for administrators.
   useEffect(() => {
-    if (user?.role !== 'admin') {
+    if (!isAdmin) {
       setDashboardData(null)
       setDashboardError('')
+      setDashboardLoading(false)
       return
     }
 
     const controller = new AbortController()
 
     async function loadDashboard() {
+      setDashboardLoading(true)
       setDashboardError('')
 
       try {
@@ -273,15 +317,18 @@ function App() {
               'Unable to load administrator dashboard data.'
           )
         }
+      } finally {
+        if (!controller.signal.aborted) {
+          setDashboardLoading(false)
+        }
       }
     }
 
     void loadDashboard()
-
     return () => controller.abort()
   }, [user?.id, user?.role])
 
-  // Reset stale booking messages when the account changes.
+  // Clear old booking messages when the logged-in account changes.
   useEffect(() => {
     setBookingError('')
     setBookingMessage('')
@@ -293,11 +340,7 @@ function App() {
     setLoginError('')
     setLoginMessage('')
 
-    window.scrollTo({
-      top: 0,
-      left: 0,
-      behavior: 'smooth',
-    })
+    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
   }
 
   async function handleLogin(event) {
@@ -338,6 +381,7 @@ function App() {
       setPassword('')
       setShowLogin(false)
       setLoginMessage('Login successful!')
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
     } catch (err) {
       const validationErrors = err.response?.data?.errors
       const firstValidationError = validationErrors
@@ -364,14 +408,34 @@ function App() {
       delete axios.defaults.headers.common.Authorization
 
       setUser(null)
+      setDashboardData(null)
+      setDashboardError('')
       setLoginMessage('You have logged out.')
       setLoginError('')
       setShowLogin(false)
       setPassword('')
+      setLoginType('customer')
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
     }
   }
 
-  // Submit a new appointment to Laravel.
+  async function handleRefreshDashboard() {
+    setDashboardLoading(true)
+    setDashboardError('')
+
+    try {
+      const response = await axios.get(`${API_URL}/admin/dashboard`)
+      setDashboardData(response.data)
+    } catch (err) {
+      setDashboardError(
+        err.response?.data?.message ||
+          'Unable to load administrator dashboard data.'
+      )
+    } finally {
+      setDashboardLoading(false)
+    }
+  }
+
   async function handleBooking(event) {
     event.preventDefault()
     setBookingError('')
@@ -440,7 +504,6 @@ function App() {
     cursor: 'pointer',
   })
 
-  // Local date for the minimum date input.
   const today = (() => {
     const now = new Date()
     const year = now.getFullYear()
@@ -449,48 +512,80 @@ function App() {
     return `${year}-${month}-${day}`
   })()
 
+  const summaryCards = [
+    ['Total Bookings', dashboardData?.summary?.total_bookings],
+    ['Pending', dashboardData?.summary?.pending_bookings],
+    ['Confirmed', dashboardData?.summary?.confirmed_bookings],
+    ['Completed', dashboardData?.summary?.completed_bookings],
+    ['Cancelled', dashboardData?.summary?.cancelled_bookings],
+    ['No-Shows', dashboardData?.summary?.no_show_bookings],
+  ]
+
   return (
     <div className="app">
       <header className="navbar">
         <a
           className="brand"
-          href="#home"
-          onClick={(event) => scrollToSection('home', event)}
+          href={isAdmin ? '#admin-dashboard' : '#home'}
+          onClick={(event) =>
+            scrollToSection(isAdmin ? 'admin-dashboard' : 'home', event)
+          }
         >
           BARBER<span>BOOK</span>
         </a>
 
-        <nav>
-          <a
-            href="#services"
-            onClick={(event) => scrollToSection('services', event)}
-          >
-            Services
-          </a>
-
-          <a
-            href="#barbers"
-            onClick={(event) => scrollToSection('barbers', event)}
-          >
-            Our Barbers
-          </a>
-
-          <a
-            href="#booking"
-            onClick={(event) => scrollToSection('booking', event)}
-          >
-            Booking
-          </a>
-        </nav>
+        {isAdmin ? (
+          <nav>
+            <a
+              href="#admin-dashboard"
+              onClick={(event) => scrollToSection('admin-dashboard', event)}
+            >
+              Dashboard
+            </a>
+            <a
+              href="#barber-statistics"
+              onClick={(event) => scrollToSection('barber-statistics', event)}
+            >
+              Barber Statistics
+            </a>
+            <a
+              href="#recent-appointments"
+              onClick={(event) =>
+                scrollToSection('recent-appointments', event)
+              }
+            >
+              Recent Appointments
+            </a>
+          </nav>
+        ) : (
+          <nav>
+            <a
+              href="#services"
+              onClick={(event) => scrollToSection('services', event)}
+            >
+              Services
+            </a>
+            <a
+              href="#barbers"
+              onClick={(event) => scrollToSection('barbers', event)}
+            >
+              Our Barbers
+            </a>
+            <a
+              href="#booking"
+              onClick={(event) => scrollToSection('booking', event)}
+            >
+              Booking
+            </a>
+          </nav>
+        )}
 
         {user ? (
           <div className="account-actions">
             <span>Hi, {user.name}</span>
-
             <span style={getRoleBadgeStyle(user.role)}>
               {getRoleLabel(user.role)}
             </span>
-
             <button className="nav-button" onClick={handleLogout}>
               Logout
             </button>
@@ -598,151 +693,108 @@ function App() {
           </section>
         )}
 
-        {user && (
-          <section className="account-panel">
-            <p className="eyebrow">YOUR ACCOUNT</p>
-            <h2>Welcome, {user.name}!</h2>
-            <p>Email: {user.email}</p>
-
-            <p>
-              Account type:{' '}
-              <span style={getRoleBadgeStyle(user.role)}>
-                {getRoleLabel(user.role)}
-              </span>
-            </p>
-
-            {user.role === 'admin' && (
-              <p>You are logged in with an administrator account.</p>
-            )}
-
-            {user.role === 'customer' && (
-              <p>You are logged in with a customer account.</p>
-            )}
-
-            {!user.role && (
-              <p>
-                Your account role was not returned by the server. Please check
-                the Laravel user record.
-              </p>
-            )}
-
-            <p>You are successfully logged in.</p>
-          </section>
+        {loginMessage && (
+          <p className="success-message" role="status">
+            {loginMessage}
+          </p>
         )}
 
-        {/* Administrator dashboard */}
-        {user?.role === 'admin' && (
-          <section
-            className="section"
-            id="admin-dashboard"
-            style={{ paddingTop: '36px' }}
-          >
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">ADMINISTRATION</p>
-                <h2>Administrator Dashboard</h2>
+        {/* ADMIN INTERFACE: administrators see the dashboard only. */}
+        {isAdmin && (
+          <>
+            <section className="admin-welcome">
+              <p className="eyebrow">ADMINISTRATION</p>
+              <h1>Administrator Dashboard</h1>
+              <p>
+                Welcome, {user.name}. Review booking statistics and recent
+                appointments from this page.
+              </p>
+              <span style={getRoleBadgeStyle(user.role)}>ADMINISTRATOR</span>
+            </section>
+
+            <section className="section admin-dashboard" id="admin-dashboard">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">OVERVIEW</p>
+                  <h2>Booking Summary</h2>
+                </div>
+
+                <button
+                  className="nav-button"
+                  type="button"
+                  onClick={handleRefreshDashboard}
+                  disabled={dashboardLoading}
+                >
+                  {dashboardLoading ? 'Refreshing...' : 'Refresh Data'}
+                </button>
               </div>
 
-              <button
-                className="nav-button"
-                type="button"
-                onClick={async () => {
-                  setDashboardError('')
+              {dashboardError && (
+                <p className="error-message" role="alert">
+                  {dashboardError}
+                </p>
+              )}
 
-                  try {
-                    const response = await axios.get(
-                      `${API_URL}/admin/dashboard`
-                    )
-                    setDashboardData(response.data)
-                  } catch (err) {
-                    setDashboardError(
-                      err.response?.data?.message ||
-                        'Unable to load administrator dashboard data.'
-                    )
-                  }
-                }}
-              >
-                Refresh Data
-              </button>
-            </div>
+              {dashboardLoading && !dashboardData && (
+                <p>Loading dashboard data...</p>
+              )}
 
-            {dashboardError && (
-              <p className="error-message" role="alert">
-                {dashboardError}
-              </p>
-            )}
+              {!dashboardLoading && !dashboardData && !dashboardError && (
+                <p>Dashboard data is not available yet.</p>
+              )}
 
-            {!dashboardData && !dashboardError && (
-              <p>Loading dashboard data...</p>
-            )}
-
-            {dashboardData && (
-              <>
-                <div
-                  className="service-grid"
-                  style={{
-                    gridTemplateColumns:
-                      'repeat(auto-fit, minmax(150px, 1fr))',
-                  }}
-                >
-                  {[
-                    [
-                      'Total Bookings',
-                      dashboardData.summary?.total_bookings,
-                    ],
-                    ['Pending', dashboardData.summary?.pending_bookings],
-                    ['Confirmed', dashboardData.summary?.confirmed_bookings],
-                    ['Completed', dashboardData.summary?.completed_bookings],
-                    ['Cancelled', dashboardData.summary?.cancelled_bookings],
-                    ['No-Shows', dashboardData.summary?.no_show_bookings],
-                  ].map(([label, value]) => (
-                    <article className="service-card" key={label}>
+              {dashboardData && (
+                <div className="dashboard-summary-grid">
+                  {summaryCards.map(([label, value]) => (
+                    <article className="dashboard-stat-card" key={label}>
                       <p>{label}</p>
-                      <h3 style={{ fontSize: '28px', margin: '8px 0 0' }}>
-                        {value ?? 0}
-                      </h3>
+                      <h3>{value ?? 0}</h3>
                     </article>
                   ))}
                 </div>
+              )}
+            </section>
 
-                <div style={{ marginTop: '32px' }}>
-                  <h3>Bookings by Barber</h3>
+            {dashboardData && (
+              <>
+                <section
+                  className="section admin-table-section"
+                  id="barber-statistics"
+                >
+                  <div className="section-heading">
+                    <div>
+                      <p className="eyebrow">TEAM PERFORMANCE</p>
+                      <h2>Bookings by Barber</h2>
+                    </div>
+                  </div>
 
                   {dashboardData.bookings_by_barber?.length ? (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table
-                        style={{
-                          width: '100%',
-                          borderCollapse: 'collapse',
-                        }}
-                      >
+                    <div className="admin-table-wrapper">
+                      <table className="admin-table">
                         <thead>
                           <tr>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Barber
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Total Bookings
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Availability
-                            </th>
+                            <th>Barber</th>
+                            <th>Total Bookings</th>
+                            <th>Availability</th>
                           </tr>
                         </thead>
-
                         <tbody>
                           {dashboardData.bookings_by_barber.map((barber) => (
                             <tr key={barber.id}>
-                              <td style={{ padding: '12px' }}>
-                                {barber.name}
-                              </td>
-                              <td style={{ padding: '12px' }}>
-                                {barber.appointments_count}
-                              </td>
-                              <td style={{ padding: '12px' }}>
-                                {barber.is_available
-                                  ? 'Available'
-                                  : 'Unavailable'}
+                              <td>{barber.name}</td>
+                              <td>{barber.appointments_count ?? 0}</td>
+                              <td>
+                                <span
+                                  className={
+                                    barber.is_available
+                                      ? 'status available'
+                                      : 'status unavailable'
+                                  }
+                                >
+                                  {barber.is_available
+                                    ? 'Available'
+                                    : 'Unavailable'}
+                                </span>
                               </td>
                             </tr>
                           ))}
@@ -752,66 +804,63 @@ function App() {
                   ) : (
                     <p>No barber booking data available.</p>
                   )}
-                </div>
+                </section>
 
-                <div style={{ marginTop: '32px' }}>
-                  <h3>Recent Appointments</h3>
+                <section
+                  className="section admin-table-section"
+                  id="recent-appointments"
+                >
+                  <div className="section-heading">
+                    <div>
+                      <p className="eyebrow">LATEST ACTIVITY</p>
+                      <h2>Recent Appointments</h2>
+                    </div>
+                  </div>
 
                   {dashboardData.recent_appointments?.length ? (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table
-                        style={{
-                          width: '100%',
-                          borderCollapse: 'collapse',
-                        }}
-                      >
+                    <div className="admin-table-wrapper">
+                      <table className="admin-table">
                         <thead>
                           <tr>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Customer
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Barber
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Service
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Date
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Time
-                            </th>
-                            <th style={{ textAlign: 'left', padding: '12px' }}>
-                              Status
-                            </th>
+                            <th>Customer</th>
+                            <th>Email</th>
+                            <th>Barber</th>
+                            <th>Service</th>
+                            <th>Date</th>
+                            <th>Time</th>
+                            <th>Status</th>
                           </tr>
                         </thead>
-
                         <tbody>
                           {dashboardData.recent_appointments.map(
                             (appointment) => (
                               <tr key={appointment.id}>
-                                <td style={{ padding: '12px' }}>
+                                <td>
                                   {appointment.customer?.name || 'Unknown'}
-                                  {appointment.customer?.email && (
-                                    <div>{appointment.customer.email}</div>
-                                  )}
                                 </td>
-                                <td style={{ padding: '12px' }}>
+                                <td>
+                                  {appointment.customer?.email || '—'}
+                                </td>
+                                <td>
                                   {appointment.barber?.name || '—'}
                                 </td>
-                                <td style={{ padding: '12px' }}>
+                                <td>
                                   {appointment.service?.name || '—'}
                                 </td>
-                                <td style={{ padding: '12px' }}>
-                                  {appointment.appointment_date || '—'}
+                                <td>
+                                  {formatAppointmentDate(
+                                    appointment.appointment_date
+                                  )}
                                 </td>
-                                <td style={{ padding: '12px' }}>
-                                  {appointment.appointment_time || '—'}
+                                <td>
+                                  {formatAppointmentTime(
+                                    appointment.appointment_time
+                                  )}
                                 </td>
-                                <td style={{ padding: '12px' }}>
-                                  {appointment.status || '—'}
+                                <td>
+                                  <span className="appointment-status">
+                                    {formatStatus(appointment.status)}
+                                  </span>
                                 </td>
                               </tr>
                             )
@@ -822,341 +871,340 @@ function App() {
                   ) : (
                     <p>No appointments have been recorded yet.</p>
                   )}
-                </div>
+                </section>
               </>
             )}
-          </section>
+          </>
         )}
 
-        {loginMessage && (
-          <p className="success-message">{loginMessage}</p>
-        )}
-
-        <section className="hero" id="home">
-          <div className="hero-content">
-            <p className="eyebrow">YOUR STYLE, OUR CRAFT</p>
-
-            <h1>
-              A Fresh Cut.
-              <br />
-              <span>A Better You.</span>
-            </h1>
-
-            <p className="hero-description">
-              Find your barber, choose your service, and book your next visit
-              with ease.
-            </p>
-
-            <a
-              className="primary-button"
-              href="#booking"
-              onClick={(event) => scrollToSection('booking', event)}
-            >
-              Book an Appointment →
-            </a>
-          </div>
-
-          <div className="hero-art" aria-label="Barber shop illustration">
-            <div className="pole">
-              <span />
-              <span />
-              <span />
-            </div>
-
-            <div className="art-circle">
-              <div className="scissors">✂</div>
-              <div className="comb">▤</div>
-              <p>
-                CLASSIC CUTS
-                <br />
-                MODERN STYLE
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="section" id="services">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">WHAT WE OFFER</p>
-              <h2>Our Services</h2>
-            </div>
-
-            <p>Quality grooming for every style.</p>
-          </div>
-
-          {servicesLoading && services.length === 0 ? (
-            <p>Loading services...</p>
-          ) : (
-            <>
-              <div className="service-grid">
-                {services.map((service) => (
-                  <article className="service-card" key={service.id}>
-                    <div className="service-icon">✂</div>
-                    <h3>{service.name}</h3>
-
-                    <p>
-                      {service.description || 'Professional barber service.'}
-                    </p>
-
-                    <div className="service-bottom">
-                      <strong>₱{Number(service.price).toFixed(2)}</strong>
-                      <span>{service.duration_minutes} min</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-
-              {servicePagination && (
-                <div className="pagination-controls">
-                  <button
-                    onClick={() =>
-                      setServicePage((page) => Math.max(1, page - 1))
-                    }
-                    disabled={servicePagination.current_page <= 1}
-                  >
-                    Previous
-                  </button>
-
-                  <span>
-                    Page {servicePagination.current_page} of{' '}
-                    {servicePagination.last_page}
+        {/* CUSTOMER/PUBLIC INTERFACE: hidden from administrators. */}
+        {!isAdmin && (
+          <>
+            {user && (
+              <section className="account-panel">
+                <p className="eyebrow">YOUR ACCOUNT</p>
+                <h2>Welcome, {user.name}!</h2>
+                <p>Email: {user.email}</p>
+                <p>
+                  Account type:{' '}
+                  <span style={getRoleBadgeStyle(user.role)}>
+                    {getRoleLabel(user.role)}
                   </span>
+                </p>
+                <p>You are successfully logged in.</p>
+              </section>
+            )}
 
-                  <button
-                    onClick={() =>
-                      setServicePage((page) =>
-                        Math.min(servicePagination.last_page, page + 1)
-                      )
-                    }
-                    disabled={
-                      servicePagination.current_page >=
-                      servicePagination.last_page
-                    }
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-
-        <section className="section barbers-section" id="barbers">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">MEET THE TEAM</p>
-              <h2>Our Barbers</h2>
-            </div>
-
-            <p>Experienced hands. Sharp results.</p>
-          </div>
-
-          {barbersLoading && barbers.length === 0 ? (
-            <p>Loading barbers...</p>
-          ) : (
-            <>
-              <div className="barber-grid">
-                {barbers.map((barber) => (
-                  <article className="barber-card" key={barber.id}>
-                    <div className="barber-avatar">
-                      {barber.name.charAt(0)}
-                    </div>
-
-                    <h3>{barber.name}</h3>
-                    <p>{barber.description || 'Professional barber'}</p>
-
-                    <span
-                      className={
-                        barber.is_available
-                          ? 'status available'
-                          : 'status unavailable'
-                      }
-                    >
-                      {barber.is_available
-                        ? 'Available'
-                        : 'Currently unavailable'}
-                    </span>
-                  </article>
-                ))}
-              </div>
-
-              {barberPagination && (
-                <div className="pagination-controls">
-                  <button
-                    onClick={() =>
-                      setBarberPage((page) => Math.max(1, page - 1))
-                    }
-                    disabled={barberPagination.current_page <= 1}
-                  >
-                    Previous
-                  </button>
-
-                  <span>
-                    Page {barberPagination.current_page} of{' '}
-                    {barberPagination.last_page}
-                  </span>
-
-                  <button
-                    onClick={() =>
-                      setBarberPage((page) =>
-                        Math.min(barberPagination.last_page, page + 1)
-                      )
-                    }
-                    disabled={
-                      barberPagination.current_page >=
-                      barberPagination.last_page
-                    }
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-
-        <section className="booking-banner" id="booking">
-          <p className="eyebrow">READY FOR A FRESH LOOK?</p>
-          <h2>Your Next Great Haircut Starts Here.</h2>
-          <p>Choose from our services and meet our barbers.</p>
-
-          {!user && (
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                justifyContent: 'center',
-                gap: '12px',
-              }}
-            >
-              <button
-                className="primary-button"
-                onClick={() => openLogin('customer')}
-              >
-                Customer Login →
-              </button>
-
-              <button
-                className="primary-button"
-                onClick={() => openLogin('admin')}
-              >
-                Admin Login →
-              </button>
-            </div>
-          )}
-
-          {user?.role === 'admin' && (
-            <p>
-              Administrator accounts cannot create customer bookings here.
-            </p>
-          )}
-
-          {user?.role === 'customer' && (
-            <div
-              className="login-card"
-              style={{
-                maxWidth: '560px',
-                width: '100%',
-                margin: '24px auto 0',
-                textAlign: 'left',
-              }}
-            >
-              <h3>Book an Appointment</h3>
-              <p>Choose a barber, service, date, and available time.</p>
-
-              <form onSubmit={handleBooking} noValidate>
-                <label htmlFor="booking-barber">Choose a Barber</label>
-
-                <select
-                  id="booking-barber"
-                  value={bookingBarberId}
-                  onChange={(event) => setBookingBarberId(event.target.value)}
-                  required
+            <section className="hero" id="home">
+              <div className="hero-content">
+                <p className="eyebrow">YOUR STYLE, OUR CRAFT</p>
+                <h1>
+                  A Fresh Cut.
+                  <br />
+                  <span>A Better You.</span>
+                </h1>
+                <p className="hero-description">
+                  Find your barber, choose your service, and book your next
+                  visit with ease.
+                </p>
+                <a
+                  className="primary-button"
+                  href="#booking"
+                  onClick={(event) => scrollToSection('booking', event)}
                 >
-                  <option value="">Select a barber</option>
+                  Book an Appointment →
+                </a>
+              </div>
 
-                  {barbers
-                    .filter((barber) => barber.is_available)
-                    .map((barber) => (
-                      <option key={barber.id} value={barber.id}>
-                        {barber.name}
-                      </option>
+              <div className="hero-art" aria-label="Barber shop illustration">
+                <div className="pole">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="art-circle">
+                  <div className="scissors">✂</div>
+                  <div className="comb">▤</div>
+                  <p>
+                    CLASSIC CUTS
+                    <br />
+                    MODERN STYLE
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section className="section" id="services">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">WHAT WE OFFER</p>
+                  <h2>Our Services</h2>
+                </div>
+                <p>Quality grooming for every style.</p>
+              </div>
+
+              {servicesLoading && services.length === 0 ? (
+                <p>Loading services...</p>
+              ) : (
+                <>
+                  <div className="service-grid">
+                    {services.map((service) => (
+                      <article className="service-card" key={service.id}>
+                        <div className="service-icon">✂</div>
+                        <h3>{service.name}</h3>
+                        <p>
+                          {service.description ||
+                            'Professional barber service.'}
+                        </p>
+                        <div className="service-bottom">
+                          <strong>
+                            ₱{Number(service.price).toFixed(2)}
+                          </strong>
+                          <span>{service.duration_minutes} min</span>
+                        </div>
+                      </article>
                     ))}
-                </select>
+                  </div>
 
-                <label htmlFor="booking-service">Choose a Service</label>
+                  {servicePagination && (
+                    <div className="pagination-controls">
+                      <button
+                        onClick={() =>
+                          setServicePage((page) => Math.max(1, page - 1))
+                        }
+                        disabled={servicePagination.current_page <= 1}
+                      >
+                        Previous
+                      </button>
+                      <span>
+                        Page {servicePagination.current_page} of{' '}
+                        {servicePagination.last_page}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setServicePage((page) =>
+                            Math.min(servicePagination.last_page, page + 1)
+                          )
+                        }
+                        disabled={
+                          servicePagination.current_page >=
+                          servicePagination.last_page
+                        }
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
 
-                <select
-                  id="booking-service"
-                  value={bookingServiceId}
-                  onChange={(event) => setBookingServiceId(event.target.value)}
-                  required
+            <section className="section barbers-section" id="barbers">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">MEET THE TEAM</p>
+                  <h2>Our Barbers</h2>
+                </div>
+                <p>Experienced hands. Sharp results.</p>
+              </div>
+
+              {barbersLoading && barbers.length === 0 ? (
+                <p>Loading barbers...</p>
+              ) : (
+                <>
+                  <div className="barber-grid">
+                    {barbers.map((barber) => (
+                      <article className="barber-card" key={barber.id}>
+                        <div className="barber-avatar">
+                          {barber.name.charAt(0)}
+                        </div>
+                        <h3>{barber.name}</h3>
+                        <p>
+                          {barber.description || 'Professional barber'}
+                        </p>
+                        <span
+                          className={
+                            barber.is_available
+                              ? 'status available'
+                              : 'status unavailable'
+                          }
+                        >
+                          {barber.is_available
+                            ? 'Available'
+                            : 'Currently unavailable'}
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+
+                  {barberPagination && (
+                    <div className="pagination-controls">
+                      <button
+                        onClick={() =>
+                          setBarberPage((page) => Math.max(1, page - 1))
+                        }
+                        disabled={barberPagination.current_page <= 1}
+                      >
+                        Previous
+                      </button>
+                      <span>
+                        Page {barberPagination.current_page} of{' '}
+                        {barberPagination.last_page}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setBarberPage((page) =>
+                            Math.min(barberPagination.last_page, page + 1)
+                          )
+                        }
+                        disabled={
+                          barberPagination.current_page >=
+                          barberPagination.last_page
+                        }
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+
+            <section className="booking-banner" id="booking">
+              <p className="eyebrow">READY FOR A FRESH LOOK?</p>
+              <h2>Your Next Great Haircut Starts Here.</h2>
+              <p>Choose from our services and meet our barbers.</p>
+
+              {!user && (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    justifyContent: 'center',
+                    gap: '12px',
+                  }}
                 >
-                  <option value="">Select a service</option>
+                  <button
+                    className="primary-button"
+                    onClick={() => openLogin('customer')}
+                  >
+                    Customer Login →
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={() => openLogin('admin')}
+                  >
+                    Admin Login →
+                  </button>
+                </div>
+              )}
 
-                  {services.map((service) => (
-                    <option key={service.id} value={service.id}>
-                      {service.name} — ₱{Number(service.price).toFixed(2)}
-                    </option>
-                  ))}
-                </select>
-
-                <label htmlFor="booking-date">Appointment Date</label>
-
-                <input
-                  id="booking-date"
-                  type="date"
-                  min={today}
-                  value={bookingDate}
-                  onChange={(event) => setBookingDate(event.target.value)}
-                  required
-                />
-
-                <label htmlFor="booking-time">Appointment Time</label>
-
-                <input
-                  id="booking-time"
-                  type="time"
-                  value={bookingTime}
-                  onChange={(event) => setBookingTime(event.target.value)}
-                  required
-                />
-
-                <label htmlFor="booking-notes">Notes (Optional)</label>
-
-                <textarea
-                  id="booking-notes"
-                  value={bookingNotes}
-                  onChange={(event) => setBookingNotes(event.target.value)}
-                  maxLength={1000}
-                  rows={3}
-                  placeholder="Any special requests?"
-                />
-
-                {bookingError && (
-                  <p className="error-message" role="alert">
-                    {bookingError}
-                  </p>
-                )}
-
-                {bookingMessage && (
-                  <p className="success-message" role="status">
-                    {bookingMessage}
-                  </p>
-                )}
-
-                <button
-                  className="primary-button login-submit"
-                  type="submit"
-                  disabled={bookingLoading}
+              {user?.role === 'customer' && (
+                <div
+                  className="login-card"
+                  style={{
+                    maxWidth: '560px',
+                    width: '100%',
+                    margin: '24px auto 0',
+                    textAlign: 'left',
+                  }}
                 >
-                  {bookingLoading ? 'Submitting...' : 'Confirm Appointment'}
-                </button>
-              </form>
-            </div>
-          )}
-        </section>
+                  <h3>Book an Appointment</h3>
+                  <p>Choose a barber, service, date, and time.</p>
+
+                  <form onSubmit={handleBooking} noValidate>
+                    <label htmlFor="booking-barber">Choose a Barber</label>
+                    <select
+                      id="booking-barber"
+                      value={bookingBarberId}
+                      onChange={(event) =>
+                        setBookingBarberId(event.target.value)
+                      }
+                      required
+                    >
+                      <option value="">Select a barber</option>
+                      {barbers
+                        .filter((barber) => barber.is_available)
+                        .map((barber) => (
+                          <option key={barber.id} value={barber.id}>
+                            {barber.name}
+                          </option>
+                        ))}
+                    </select>
+
+                    <label htmlFor="booking-service">Choose a Service</label>
+                    <select
+                      id="booking-service"
+                      value={bookingServiceId}
+                      onChange={(event) =>
+                        setBookingServiceId(event.target.value)
+                      }
+                      required
+                    >
+                      <option value="">Select a service</option>
+                      {services.map((service) => (
+                        <option key={service.id} value={service.id}>
+                          {service.name} — ₱
+                          {Number(service.price).toFixed(2)}
+                        </option>
+                      ))}
+                    </select>
+
+                    <label htmlFor="booking-date">Appointment Date</label>
+                    <input
+                      id="booking-date"
+                      type="date"
+                      min={today}
+                      value={bookingDate}
+                      onChange={(event) => setBookingDate(event.target.value)}
+                      required
+                    />
+
+                    <label htmlFor="booking-time">Appointment Time</label>
+                    <input
+                      id="booking-time"
+                      type="time"
+                      value={bookingTime}
+                      onChange={(event) => setBookingTime(event.target.value)}
+                      required
+                    />
+
+                    <label htmlFor="booking-notes">Notes (Optional)</label>
+                    <textarea
+                      id="booking-notes"
+                      value={bookingNotes}
+                      onChange={(event) => setBookingNotes(event.target.value)}
+                      maxLength={1000}
+                      rows={3}
+                      placeholder="Any special requests?"
+                    />
+
+                    {bookingError && (
+                      <p className="error-message" role="alert">
+                        {bookingError}
+                      </p>
+                    )}
+                    {bookingMessage && (
+                      <p className="success-message" role="status">
+                        {bookingMessage}
+                      </p>
+                    )}
+
+                    <button
+                      className="primary-button login-submit"
+                      type="submit"
+                      disabled={bookingLoading}
+                    >
+                      {bookingLoading
+                        ? 'Submitting...'
+                        : 'Confirm Appointment'}
+                    </button>
+                  </form>
+                </div>
+              )}
+            </section>
+          </>
+        )}
 
         {error && <p className="error-message">{error}</p>}
       </main>
@@ -1164,12 +1212,13 @@ function App() {
       <footer>
         <a
           className="brand"
-          href="#home"
-          onClick={(event) => scrollToSection('home', event)}
+          href={isAdmin ? '#admin-dashboard' : '#home'}
+          onClick={(event) =>
+            scrollToSection(isAdmin ? 'admin-dashboard' : 'home', event)
+          }
         >
           BARBER<span>BOOK</span>
         </a>
-
         <p>Barber Shop Booking System · Student Project</p>
       </footer>
     </div>

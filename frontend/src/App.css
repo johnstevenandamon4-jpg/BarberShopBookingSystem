@@ -8,11 +8,12 @@
   --muted: #a9ada8;
   background: #f8f8f4;
   color: var(--dark);
+  min-height: 100vh;
 }
 
 .navbar {
   min-height: 76px;
-  padding: 0 7%;
+  padding: 16px 7%;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -27,6 +28,7 @@
   letter-spacing: 1.5px;
   text-decoration: none;
   font-size: 1.15rem;
+  white-space: nowrap;
 }
 
 .brand span {
@@ -35,13 +37,18 @@
 
 .navbar nav {
   display: flex;
-  gap: 30px;
+  flex-wrap: wrap;
+  gap: 24px;
 }
 
 .navbar nav a {
   color: #e4e6e1;
   text-decoration: none;
   font-size: 0.9rem;
+}
+
+.navbar nav a:hover {
+  color: #c5f36a;
 }
 
 .nav-button,
@@ -53,6 +60,22 @@
   padding: 13px 20px;
   border-radius: 5px;
   font-weight: 800;
+  border: none;
+}
+
+.nav-button {
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.nav-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.primary-button {
+  cursor: pointer;
 }
 
 .hero {
@@ -213,6 +236,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-top: 22px;
   padding-top: 16px;
   border-top: 1px solid #e9ebe5;
@@ -276,69 +300,10 @@
   margin-bottom: 25px;
 }
 
-.error-message {
-  margin: 25px 8%;
-  color: #a32121;
+.booking-banner .login-card {
+  color: var(--dark);
 }
 
-footer {
-  padding: 30px 8%;
-  background: #171a18;
-  color: #d6d9d2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  font-size: 0.85rem;
-}
-
-@media (max-width: 760px) {
-  .navbar {
-    padding: 20px 5%;
-    flex-wrap: wrap;
-  }
-
-  .navbar nav {
-    order: 3;
-    width: 100%;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .hero {
-    grid-template-columns: 1fr;
-    padding: 55px 7%;
-  }
-
-  .hero-art {
-    min-height: 250px;
-  }
-
-  .section {
-    padding: 50px 6%;
-  }
-
-  .section-heading {
-    align-items: start;
-    flex-direction: column;
-  }
-
-  .service-grid,
-  .barber-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .booking-banner {
-    margin: 40px 5%;
-  }
-
-  footer {
-    flex-direction: column;
-    text-align: center;
-  }
-}
-
-/* Login and account styles */
 .login-section {
   padding: 48px 20px;
   background: #f4f4f0;
@@ -371,13 +336,21 @@ footer {
   font-weight: 600;
 }
 
-.login-card input {
+.login-card input,
+.login-card select,
+.login-card textarea {
   width: 100%;
   padding: 12px;
   border: 1px solid #cccccc;
   border-radius: 6px;
   font: inherit;
   margin-bottom: 8px;
+  background: white;
+  color: #171a18;
+}
+
+.login-card textarea {
+  resize: vertical;
 }
 
 .login-submit {
@@ -396,12 +369,9 @@ footer {
 .account-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
-}
-
-.nav-button {
-  cursor: pointer;
-  font: inherit;
 }
 
 .account-panel {
@@ -420,22 +390,19 @@ footer {
   text-align: center;
 }
 
-@media (max-width: 600px) {
-  .login-card {
-    padding: 24px;
-  }
-
-  .account-actions {
-    flex-wrap: wrap;
-    justify-content: center;
-  }
+.error-message {
+  margin: 16px auto;
+  color: #a32121;
+  line-height: 1.6;
 }
 
 /* Pagination controls */
+
 .pagination-controls {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 24px;
 }
@@ -460,7 +427,136 @@ footer {
   font-size: 0.9rem;
 }
 
+/* Administrator interface */
+
+.admin-welcome {
+  padding: 48px 8%;
+  background: #20251e;
+  color: white;
+}
+
+.admin-welcome .eyebrow {
+  color: #c5f36a;
+}
+
+.admin-welcome h1 {
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  margin: 12px 0;
+  letter-spacing: -1px;
+}
+
+.admin-welcome p:not(.eyebrow) {
+  max-width: 680px;
+  line-height: 1.7;
+  color: #d0d4cd;
+}
+
+.admin-welcome > span {
+  margin-top: 8px;
+}
+
+.admin-dashboard {
+  padding-top: 48px;
+  padding-bottom: 45px;
+}
+
+.admin-dashboard .section-heading {
+  align-items: center;
+}
+
+.dashboard-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.dashboard-stat-card {
+  min-width: 0;
+  padding: 24px;
+  background: white;
+  border: 1px solid #e5e7df;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.dashboard-stat-card p {
+  margin: 0;
+  color: #686e67;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.dashboard-stat-card h3 {
+  margin: 12px 0 0;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  color: #20251e;
+}
+
+.admin-table-section {
+  padding-top: 40px;
+  padding-bottom: 50px;
+}
+
+.admin-table-section:nth-of-type(even) {
+  background: #eff0e9;
+}
+
+.admin-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  background: white;
+  border: 1px solid #e2e5dc;
+  border-radius: 10px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  background: white;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 15px 16px;
+  border-bottom: 1px solid #e9ebe5;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.admin-table th {
+  background: #20251e;
+  color: white;
+  font-size: 0.82rem;
+  letter-spacing: 0.3px;
+  font-weight: 700;
+}
+
+.admin-table td {
+  color: #343a34;
+  font-size: 0.9rem;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table tbody tr:hover {
+  background: #f7f9f2;
+}
+
+.appointment-status {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: #eef0e9;
+  color: #30372d;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 /* Navigation and scroll behavior */
+
 html {
   scroll-behavior: smooth;
   scroll-padding-top: 90px;
@@ -470,6 +566,124 @@ html {
 #services,
 #barbers,
 #booking,
-#login {
+#login,
+#admin-dashboard,
+#barber-statistics,
+#recent-appointments {
   scroll-margin-top: 90px;
+}
+
+footer {
+  padding: 30px 8%;
+  background: #171a18;
+  color: #d6d9d2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 0.85rem;
+}
+
+/* Responsive layout */
+
+@media (max-width: 1000px) {
+  .navbar {
+    padding-left: 5%;
+    padding-right: 5%;
+  }
+
+  .navbar nav {
+    gap: 14px;
+  }
+
+  .dashboard-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-table th,
+  .admin-table td {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 760px) {
+  .navbar {
+    padding: 20px 5%;
+    flex-wrap: wrap;
+  }
+
+  .navbar nav {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .account-actions {
+    justify-content: flex-start;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    padding: 55px 7%;
+  }
+
+  .hero-art {
+    min-height: 250px;
+  }
+
+  .section {
+    padding: 50px 6%;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .service-grid,
+  .barber-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-banner {
+    margin: 40px 5%;
+  }
+
+  .admin-welcome {
+    padding: 40px 6%;
+  }
+
+  .dashboard-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .dashboard-stat-card {
+    padding: 18px;
+  }
+
+  footer {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar nav {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .dashboard-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .login-card {
+    padding: 24px;
+  }
+
+  .admin-dashboard .section-heading {
+    align-items: flex-start;
+  }
 }
