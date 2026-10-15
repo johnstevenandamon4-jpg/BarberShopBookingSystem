@@ -5,64 +5,139 @@ import './App.css'
 
 const API_URL = 'http://127.0.0.1:8000/api'
 
+// Reusable hook for saving and restoring non-sensitive form drafts.
+// We can reuse this for appointment and admin forms when they are added.
+function useDraftState(storageKey, initialValue) {
+  const [value, setValue] = useState(() => {
+    try {
+      const savedValue = localStorage.getItem(storageKey)
+
+      return savedValue !== null
+        ? JSON.parse(savedValue)
+        : initialValue
+    } catch {
+      return initialValue
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(value))
+    } catch {
+      // The application can still work if browser storage is unavailable.
+    }
+  }, [storageKey, value])
+
+  return [value, setValue]
+}
+
 function App() {
   const [barbers, setBarbers] = useState([])
   const [services, setServices] = useState([])
 
-  const [barberPage, setBarberPage] = useState(1)
-  const [servicePage, setServicePage] = useState(1)
+  const [barberPage, setBarberPage] = useDraftState(
+    'barberbook_barber_page',
+    1
+  )
+  const [servicePage, setServicePage] = useDraftState(
+    'barberbook_service_page',
+    1
+  )
 
   const [barberPagination, setBarberPagination] = useState(null)
   const [servicePagination, setServicePagination] = useState(null)
 
-  const [loading, setLoading] = useState(true)
+  const [barbersLoading, setBarbersLoading] = useState(true)
+  const [servicesLoading, setServicesLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const [showLogin, setShowLogin] = useState(false)
-  const [email, setEmail] = useState('')
+  // Remember the login screen and unfinished email.
+  const [showLogin, setShowLogin] = useDraftState(
+    'barberbook_login_open',
+    false
+  )
+  const [email, setEmail] = useDraftState(
+    'barberbook_login_email',
+    ''
+  )
+
+  // Never save the password in browser storage.
   const [password, setPassword] = useState('')
+
   const [user, setUser] = useState(null)
   const [loginError, setLoginError] = useState('')
   const [loginMessage, setLoginMessage] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
-  // Load paginated services and barbers.
+  // Load barbers independently.
   useEffect(() => {
-    async function loadData() {
-      // Show loading messages only during the initial data load.
-      const isInitialLoad =
-        barberPagination === null && servicePagination === null
+    const controller = new AbortController()
 
-      if (isInitialLoad) {
-        setLoading(true)
-      }
-
+    async function loadBarbers() {
+      setBarbersLoading(true)
       setError('')
 
       try {
-        const [barberResponse, serviceResponse] = await Promise.all([
-          axios.get(`${API_URL}/barbers?page=${barberPage}`),
-          axios.get(`${API_URL}/services?page=${servicePage}`),
-        ])
-
-        setBarbers(barberResponse.data.data)
-        setServices(serviceResponse.data.data)
-
-        setBarberPagination(barberResponse.data)
-        setServicePagination(serviceResponse.data)
-      } catch {
-        setError(
-          'Unable to load data. Please check that the Laravel server is running.'
+        const response = await axios.get(
+          `${API_URL}/barbers?page=${barberPage}`,
+          { signal: controller.signal }
         )
+
+        setBarbers(response.data.data)
+        setBarberPagination(response.data)
+      } catch (err) {
+        if (!axios.isCancel(err)) {
+          setError(
+            'Unable to load data. Please check that the Laravel server is running.'
+          )
+        }
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) {
+          setBarbersLoading(false)
+        }
       }
     }
 
-    void loadData()
-  }, [barberPage, servicePage, barberPagination, servicePagination])
+    void loadBarbers()
 
-  // Restore the login session when the page opens.
+    return () => controller.abort()
+  }, [barberPage])
+
+  // Load services independently.
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadServices() {
+      setServicesLoading(true)
+      setError('')
+
+      try {
+        const response = await axios.get(
+          `${API_URL}/services?page=${servicePage}`,
+          { signal: controller.signal }
+        )
+
+        setServices(response.data.data)
+        setServicePagination(response.data)
+      } catch (err) {
+        if (!axios.isCancel(err)) {
+          setError(
+            'Unable to load data. Please check that the Laravel server is running.'
+          )
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setServicesLoading(false)
+        }
+      }
+    }
+
+    void loadServices()
+
+    return () => controller.abort()
+  }, [servicePage])
+
+  // Restore the existing authenticated session.
   useEffect(() => {
     async function restoreLogin() {
       const savedToken = localStorage.getItem('barber_token')
@@ -70,7 +145,8 @@ function App() {
       if (!savedToken) return
 
       try {
-        axios.defaults.headers.common.Authorization = `Bearer ${savedToken}`
+        axios.defaults.headers.common.Authorization =
+          `Bearer ${savedToken}`
 
         const response = await axios.get(`${API_URL}/me`)
         setUser(response.data.user ?? response.data)
@@ -275,7 +351,6 @@ function App() {
           </div>
         </section>
 
-        {/* Services section */}
         <section className="section" id="services">
           <div className="section-heading">
             <div>
@@ -285,7 +360,7 @@ function App() {
             <p>Quality grooming for every style.</p>
           </div>
 
-          {loading ? (
+          {servicesLoading && services.length === 0 ? (
             <p>Loading services...</p>
           ) : (
             <>
@@ -340,7 +415,6 @@ function App() {
           )}
         </section>
 
-        {/* Barbers section */}
         <section className="section barbers-section" id="barbers">
           <div className="section-heading">
             <div>
@@ -350,7 +424,7 @@ function App() {
             <p>Experienced hands. Sharp results.</p>
           </div>
 
-          {loading ? (
+          {barbersLoading && barbers.length === 0 ? (
             <p>Loading barbers...</p>
           ) : (
             <>
@@ -413,7 +487,6 @@ function App() {
           )}
         </section>
 
-        {/* Booking section */}
         <section className="booking-banner" id="booking">
           <p className="eyebrow">READY FOR A FRESH LOOK?</p>
           <h2>Your Next Great Haircut Starts Here.</h2>
