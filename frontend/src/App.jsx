@@ -89,7 +89,6 @@ function useSessionDraftState(storageKey, initialValue) {
 function formatAppointmentDate(dateValue) {
   if (!dateValue) return '—'
 
-  // Handle a date-only value without introducing a timezone shift.
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateValue)
 
   if (match) {
@@ -151,6 +150,35 @@ function App() {
   const [dashboardError, setDashboardError] = useState('')
   const [dashboardLoading, setDashboardLoading] = useState(false)
 
+  // Administrator appointment actions.
+  const [appointmentActionLoadingId, setAppointmentActionLoadingId] =
+    useState(null)
+  const [appointmentActionError, setAppointmentActionError] = useState('')
+  const [appointmentActionMessage, setAppointmentActionMessage] = useState('')
+
+  // Administrator barber availability actions.
+  const [barberAvailabilityLoadingId, setBarberAvailabilityLoadingId] =
+    useState(null)
+  const [barberAvailabilityError, setBarberAvailabilityError] = useState('')
+  const [barberAvailabilityMessage, setBarberAvailabilityMessage] =
+    useState('')
+
+  // Customer appointment history and cancellation.
+  const [customerAppointments, setCustomerAppointments] = useState([])
+  const [customerAppointmentPagination, setCustomerAppointmentPagination] =
+    useState(null)
+  const [customerAppointmentPage, setCustomerAppointmentPage] = useState(1)
+  const [customerAppointmentsLoading, setCustomerAppointmentsLoading] =
+    useState(false)
+  const [customerAppointmentsError, setCustomerAppointmentsError] =
+    useState('')
+  const [customerAppointmentActionLoadingId, setCustomerAppointmentActionLoadingId] =
+    useState(null)
+  const [customerAppointmentActionError, setCustomerAppointmentActionError] =
+    useState('')
+  const [customerAppointmentActionMessage, setCustomerAppointmentActionMessage] =
+    useState('')
+
   const [barberPage, setBarberPage] = useDraftState(
     'barberbook_barber_page',
     1
@@ -195,6 +223,7 @@ function App() {
     loginType === 'admin' ? 'Login as Admin' : 'Login as Customer'
 
   const isAdmin = user?.role === 'admin'
+  const isCustomer = user?.role === 'customer'
 
   useEffect(() => {
     if ('scrollRestoration' in window.history) {
@@ -289,12 +318,16 @@ function App() {
     void restoreLogin()
   }, [])
 
-  // Load dashboard data only for administrators.
+  // Load administrator dashboard data only for administrators.
   useEffect(() => {
     if (!isAdmin) {
       setDashboardData(null)
       setDashboardError('')
       setDashboardLoading(false)
+      setAppointmentActionError('')
+      setAppointmentActionMessage('')
+      setBarberAvailabilityError('')
+      setBarberAvailabilityMessage('')
       return
     }
 
@@ -328,11 +361,120 @@ function App() {
     return () => controller.abort()
   }, [user?.id, user?.role])
 
-  // Clear old booking messages when the logged-in account changes.
+  // Fetch only the authenticated customer's appointments.
+  // Laravel's index() endpoint applies the user_id ownership filter.
+  useEffect(() => {
+    if (!isCustomer) {
+      setCustomerAppointments([])
+      setCustomerAppointmentPagination(null)
+      setCustomerAppointmentPage(1)
+      setCustomerAppointmentsLoading(false)
+      setCustomerAppointmentsError('')
+      setCustomerAppointmentActionError('')
+      setCustomerAppointmentActionMessage('')
+      return
+    }
+
+    const controller = new AbortController()
+
+    async function loadCustomerAppointments() {
+      setCustomerAppointmentsLoading(true)
+      setCustomerAppointmentsError('')
+
+      try {
+        const response = await axios.get(
+          `${API_URL}/appointments?page=${customerAppointmentPage}`,
+          { signal: controller.signal }
+        )
+
+        setCustomerAppointments(response.data.data ?? [])
+        setCustomerAppointmentPagination(response.data)
+      } catch (err) {
+        if (!axios.isCancel(err)) {
+          setCustomerAppointmentsError(
+            err.response?.data?.message ||
+              'Unable to load your appointments. Please try again.'
+          )
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setCustomerAppointmentsLoading(false)
+        }
+      }
+    }
+
+    void loadCustomerAppointments()
+    return () => controller.abort()
+  }, [user?.id, user?.role, customerAppointmentPage])
+
+  // Clear booking messages when the logged-in account changes.
   useEffect(() => {
     setBookingError('')
     setBookingMessage('')
   }, [user?.id])
+
+  async function refreshCustomerAppointments(page = customerAppointmentPage) {
+    if (!isCustomer) return
+
+    setCustomerAppointmentsLoading(true)
+    setCustomerAppointmentsError('')
+
+    try {
+      const response = await axios.get(`${API_URL}/appointments?page=${page}`)
+
+      setCustomerAppointments(response.data.data ?? [])
+      setCustomerAppointmentPagination(response.data)
+    } catch (err) {
+      setCustomerAppointmentsError(
+        err.response?.data?.message ||
+          'Unable to refresh your appointments. Please try again.'
+      )
+    } finally {
+      setCustomerAppointmentsLoading(false)
+    }
+  }
+
+  async function handleCustomerAppointmentCancel(appointment) {
+    if (!isCustomer || appointment.status !== 'pending') {
+      setCustomerAppointmentActionError(
+        'Only your own pending appointments can be cancelled.'
+      )
+      return
+    }
+
+    const shouldContinue = window.confirm(
+      `Are you sure you want to cancel your appointment with ${
+        appointment.barber?.name || 'this barber'
+      } on ${formatAppointmentDate(appointment.appointment_date)} at ${
+        formatAppointmentTime(appointment.appointment_time)
+      }?`
+    )
+
+    if (!shouldContinue) return
+
+    setCustomerAppointmentActionLoadingId(appointment.id)
+    setCustomerAppointmentActionError('')
+    setCustomerAppointmentActionMessage('')
+
+    try {
+      const response = await axios.delete(
+        `${API_URL}/appointments/${appointment.id}`
+      )
+
+      setCustomerAppointmentActionMessage(
+        response.data.message || 'Your appointment was cancelled successfully.'
+      )
+
+      await refreshCustomerAppointments()
+    } catch (err) {
+      setCustomerAppointmentActionError(
+        err.response?.data?.message ||
+          'Unable to cancel this appointment. Please try again.'
+      )
+    } finally {
+      setCustomerAppointmentActionLoadingId(null)
+    }
+  }
 
   function openLogin(type) {
     setLoginType(type)
@@ -381,6 +523,13 @@ function App() {
       setPassword('')
       setShowLogin(false)
       setLoginMessage('Login successful!')
+      setCustomerAppointmentPage(1)
+      setCustomerAppointmentActionError('')
+      setCustomerAppointmentActionMessage('')
+      setAppointmentActionError('')
+      setAppointmentActionMessage('')
+      setBarberAvailabilityError('')
+      setBarberAvailabilityMessage('')
       window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
     } catch (err) {
       const validationErrors = err.response?.data?.errors
@@ -410,6 +559,16 @@ function App() {
       setUser(null)
       setDashboardData(null)
       setDashboardError('')
+      setCustomerAppointments([])
+      setCustomerAppointmentPagination(null)
+      setCustomerAppointmentPage(1)
+      setCustomerAppointmentsError('')
+      setCustomerAppointmentActionError('')
+      setCustomerAppointmentActionMessage('')
+      setAppointmentActionError('')
+      setAppointmentActionMessage('')
+      setBarberAvailabilityError('')
+      setBarberAvailabilityMessage('')
       setLoginMessage('You have logged out.')
       setLoginError('')
       setShowLogin(false)
@@ -433,6 +592,145 @@ function App() {
       )
     } finally {
       setDashboardLoading(false)
+    }
+  }
+
+  // Change a barber's availability using the authenticated Laravel API.
+  async function handleBarberAvailabilityChange(barber) {
+    if (!isAdmin) {
+      setBarberAvailabilityError(
+        'Only an administrator can change barber availability.'
+      )
+      return
+    }
+
+    if (
+      barberAvailabilityLoadingId !== null ||
+      appointmentActionLoadingId !== null
+    ) {
+      return
+    }
+
+    const currentlyAvailable = Boolean(barber.is_available)
+    const nextAvailability = !currentlyAvailable
+    const nextLabel = nextAvailability ? 'Available' : 'Unavailable'
+
+    const shouldContinue = window.confirm(
+      `Are you sure you want to mark ${barber.name} as ${nextLabel}?`
+    )
+
+    if (!shouldContinue) return
+
+    setBarberAvailabilityLoadingId(barber.id)
+    setBarberAvailabilityError('')
+    setBarberAvailabilityMessage('')
+    setAppointmentActionError('')
+
+    try {
+      const updateResponse = await axios.patch(
+        `${API_URL}/barbers/${barber.id}`,
+        { is_available: nextAvailability }
+      )
+
+      const dashboardResponse = await axios.get(
+        `${API_URL}/admin/dashboard`
+      )
+      setDashboardData(dashboardResponse.data)
+
+      const barbersResponse = await axios.get(
+        `${API_URL}/barbers?page=${barberPage}`
+      )
+      setBarbers(barbersResponse.data.data)
+      setBarberPagination(barbersResponse.data)
+
+      setBarberAvailabilityMessage(
+        updateResponse.data.message ||
+          `${barber.name} is now ${nextLabel.toLowerCase()}.`
+      )
+    } catch (err) {
+      const validationErrors = err.response?.data?.errors
+      const firstValidationError = validationErrors
+        ? Object.values(validationErrors).flat()[0]
+        : null
+
+      setBarberAvailabilityError(
+        firstValidationError ||
+          err.response?.data?.message ||
+          'Unable to update barber availability. Please try again.'
+      )
+    } finally {
+      setBarberAvailabilityLoadingId(null)
+    }
+  }
+
+  // Change an appointment status using the authenticated Laravel API.
+  async function handleAppointmentStatusChange(appointment, nextStatus) {
+    if (!isAdmin) {
+      setAppointmentActionError(
+        'Only an administrator can change appointment statuses.'
+      )
+      return
+    }
+
+    if (
+      appointmentActionLoadingId !== null ||
+      barberAvailabilityLoadingId !== null
+    ) {
+      return
+    }
+
+    const actionLabels = {
+      confirmed: 'confirm',
+      cancelled: 'cancel',
+      completed: 'mark as completed',
+      no_show: 'mark as no-show',
+    }
+
+    const actionLabel = actionLabels[nextStatus]
+
+    if (!actionLabel) {
+      setAppointmentActionError('The selected appointment action is invalid.')
+      return
+    }
+
+    const customerName = appointment.customer?.name || 'this customer'
+
+    const shouldContinue = window.confirm(
+      `Are you sure you want to ${actionLabel} the appointment for ${customerName}?`
+    )
+
+    if (!shouldContinue) return
+
+    setAppointmentActionLoadingId(appointment.id)
+    setAppointmentActionError('')
+    setAppointmentActionMessage('')
+
+    try {
+      const response = await axios.patch(
+        `${API_URL}/appointments/${appointment.id}`,
+        { status: nextStatus }
+      )
+
+      const dashboardResponse = await axios.get(`${API_URL}/admin/dashboard`)
+      setDashboardData(dashboardResponse.data)
+
+      setAppointmentActionMessage(
+        response.data.message ||
+          `Appointment #${appointment.id} was updated successfully.`
+      )
+    } catch (err) {
+      const validationErrors = err.response?.data?.errors
+      const firstValidationError = validationErrors
+        ? Object.values(validationErrors).flat()[0]
+        : null
+
+      setAppointmentActionError(
+        firstValidationError ||
+          err.response?.data?.message ||
+          'Unable to update the appointment. Please try again.'
+      )
+    } finally {
+      setAppointmentActionLoadingId(null)
     }
   }
 
@@ -476,6 +774,10 @@ function App() {
       setBookingDate('')
       setBookingTime('')
       setBookingNotes('')
+
+      // Refresh the signed-in customer's appointment history.
+      setCustomerAppointmentPage(1)
+      await refreshCustomerAppointments(1)
     } catch (err) {
       const validationErrors = err.response?.data?.errors
       const firstValidationError = validationErrors
@@ -520,6 +822,46 @@ function App() {
     ['Cancelled', dashboardData?.summary?.cancelled_bookings],
     ['No-Shows', dashboardData?.summary?.no_show_bookings],
   ]
+
+  function getAppointmentActions(appointment) {
+    if (appointment.status === 'pending') {
+      return [
+        { label: 'Confirm', status: 'confirmed' },
+        { label: 'Cancel', status: 'cancelled' },
+      ]
+    }
+
+    if (appointment.status === 'confirmed') {
+      return [
+        { label: 'Complete', status: 'completed' },
+        { label: 'Cancel', status: 'cancelled' },
+        { label: 'Mark No-Show', status: 'no_show' },
+      ]
+    }
+
+    return []
+  }
+
+  const actionButtonStyle = {
+    padding: '7px 10px',
+    margin: '2px 4px 4px 0',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    backgroundColor: '#ffffff',
+    color: '#222222',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: '700',
+    whiteSpace: 'nowrap',
+  }
+
+  const availabilityButtonStyle = (available) => ({
+    ...actionButtonStyle,
+    backgroundColor: available ? '#fff7ed' : '#ecfdf5',
+    borderColor: available ? '#fdba74' : '#86efac',
+    color: available ? '#9a3412' : '#166534',
+    cursor: 'pointer',
+  })
 
   return (
     <div className="app">
@@ -571,6 +913,16 @@ function App() {
             >
               Our Barbers
             </a>
+            {isCustomer && (
+              <a
+                href="#my-appointments"
+                onClick={(event) =>
+                  scrollToSection('my-appointments', event)
+                }
+              >
+                My Appointments
+              </a>
+            )}
             <a
               href="#booking"
               onClick={(event) => scrollToSection('booking', event)}
@@ -699,7 +1051,7 @@ function App() {
           </p>
         )}
 
-        {/* ADMIN INTERFACE: administrators see the dashboard only. */}
+        {/* ADMIN INTERFACE */}
         {isAdmin && (
           <>
             <section className="admin-welcome">
@@ -768,6 +1120,18 @@ function App() {
                     </div>
                   </div>
 
+                  {barberAvailabilityError && (
+                    <p className="error-message" role="alert">
+                      {barberAvailabilityError}
+                    </p>
+                  )}
+
+                  {barberAvailabilityMessage && (
+                    <p className="success-message" role="status">
+                      {barberAvailabilityMessage}
+                    </p>
+                  )}
+
                   {dashboardData.bookings_by_barber?.length ? (
                     <div className="admin-table-wrapper">
                       <table className="admin-table">
@@ -776,28 +1140,55 @@ function App() {
                             <th>Barber</th>
                             <th>Total Bookings</th>
                             <th>Availability</th>
+                            <th>Manage Availability</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {dashboardData.bookings_by_barber.map((barber) => (
-                            <tr key={barber.id}>
-                              <td>{barber.name}</td>
-                              <td>{barber.appointments_count ?? 0}</td>
-                              <td>
-                                <span
-                                  className={
-                                    barber.is_available
-                                      ? 'status available'
-                                      : 'status unavailable'
-                                  }
-                                >
-                                  {barber.is_available
-                                    ? 'Available'
-                                    : 'Unavailable'}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {dashboardData.bookings_by_barber.map((barber) => {
+                            const isAvailable = Boolean(barber.is_available)
+                            const isUpdating =
+                              barberAvailabilityLoadingId === barber.id
+
+                            return (
+                              <tr key={barber.id}>
+                                <td>{barber.name}</td>
+                                <td>{barber.appointments_count ?? 0}</td>
+                                <td>
+                                  <span
+                                    className={
+                                      isAvailable
+                                        ? 'status available'
+                                        : 'status unavailable'
+                                    }
+                                  >
+                                    {isAvailable
+                                      ? 'Available'
+                                      : 'Unavailable'}
+                                  </span>
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    style={availabilityButtonStyle(isAvailable)}
+                                    disabled={
+                                      barberAvailabilityLoadingId !== null ||
+                                      appointmentActionLoadingId !== null ||
+                                      dashboardLoading
+                                    }
+                                    onClick={() =>
+                                      handleBarberAvailabilityChange(barber)
+                                    }
+                                  >
+                                    {isUpdating
+                                      ? 'Updating...'
+                                      : isAvailable
+                                        ? 'Mark Unavailable'
+                                        : 'Mark Available'}
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -817,6 +1208,18 @@ function App() {
                     </div>
                   </div>
 
+                  {appointmentActionError && (
+                    <p className="error-message" role="alert">
+                      {appointmentActionError}
+                    </p>
+                  )}
+
+                  {appointmentActionMessage && (
+                    <p className="success-message" role="status">
+                      {appointmentActionMessage}
+                    </p>
+                  )}
+
                   {dashboardData.recent_appointments?.length ? (
                     <div className="admin-table-wrapper">
                       <table className="admin-table">
@@ -829,41 +1232,88 @@ function App() {
                             <th>Date</th>
                             <th>Time</th>
                             <th>Status</th>
+                            <th>Admin Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {dashboardData.recent_appointments.map(
-                            (appointment) => (
-                              <tr key={appointment.id}>
-                                <td>
-                                  {appointment.customer?.name || 'Unknown'}
-                                </td>
-                                <td>
-                                  {appointment.customer?.email || '—'}
-                                </td>
-                                <td>
-                                  {appointment.barber?.name || '—'}
-                                </td>
-                                <td>
-                                  {appointment.service?.name || '—'}
-                                </td>
-                                <td>
-                                  {formatAppointmentDate(
-                                    appointment.appointment_date
-                                  )}
-                                </td>
-                                <td>
-                                  {formatAppointmentTime(
-                                    appointment.appointment_time
-                                  )}
-                                </td>
-                                <td>
-                                  <span className="appointment-status">
-                                    {formatStatus(appointment.status)}
-                                  </span>
-                                </td>
-                              </tr>
-                            )
+                            (appointment) => {
+                              const actions =
+                                getAppointmentActions(appointment)
+                              const isUpdating =
+                                appointmentActionLoadingId === appointment.id
+
+                              return (
+                                <tr key={appointment.id}>
+                                  <td>
+                                    {appointment.customer?.name || 'Unknown'}
+                                  </td>
+                                  <td>
+                                    {appointment.customer?.email || '—'}
+                                  </td>
+                                  <td>
+                                    {appointment.barber?.name || '—'}
+                                  </td>
+                                  <td>
+                                    {appointment.service?.name || '—'}
+                                  </td>
+                                  <td>
+                                    {formatAppointmentDate(
+                                      appointment.appointment_date
+                                    )}
+                                  </td>
+                                  <td>
+                                    {formatAppointmentTime(
+                                      appointment.appointment_time
+                                    )}
+                                  </td>
+                                  <td>
+                                    <span className="appointment-status">
+                                      {formatStatus(appointment.status)}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {actions.length > 0 ? (
+                                      <div style={{ minWidth: '180px' }}>
+                                        {actions.map((action) => (
+                                          <button
+                                            key={action.status}
+                                            type="button"
+                                            style={actionButtonStyle}
+                                            disabled={
+                                              appointmentActionLoadingId !==
+                                                null ||
+                                              barberAvailabilityLoadingId !==
+                                                null ||
+                                              dashboardLoading
+                                            }
+                                            onClick={() =>
+                                              handleAppointmentStatusChange(
+                                                appointment,
+                                                action.status
+                                              )
+                                            }
+                                          >
+                                            {isUpdating
+                                              ? 'Updating...'
+                                              : action.label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span
+                                        style={{
+                                          color: '#6b7280',
+                                          fontSize: '12px',
+                                        }}
+                                      >
+                                        No actions available
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              )
+                            }
                           )}
                         </tbody>
                       </table>
@@ -877,7 +1327,7 @@ function App() {
           </>
         )}
 
-        {/* CUSTOMER/PUBLIC INTERFACE: hidden from administrators. */}
+        {/* CUSTOMER/PUBLIC INTERFACE */}
         {!isAdmin && (
           <>
             {user && (
@@ -1070,6 +1520,186 @@ function App() {
               )}
             </section>
 
+            {/* Customer-only appointment history. */}
+            {isCustomer && (
+              <section className="section admin-table-section" id="my-appointments">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">YOUR BOOKINGS</p>
+                    <h2>My Appointments</h2>
+                    <p>
+                      Review your bookings and check their current status.
+                    </p>
+                  </div>
+
+                  <button
+                    className="nav-button"
+                    type="button"
+                    onClick={() => refreshCustomerAppointments()}
+                    disabled={customerAppointmentsLoading}
+                  >
+                    {customerAppointmentsLoading ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </div>
+
+                {customerAppointmentsError && (
+                  <p className="error-message" role="alert">
+                    {customerAppointmentsError}
+                  </p>
+                )}
+
+                {customerAppointmentActionError && (
+                  <p className="error-message" role="alert">
+                    {customerAppointmentActionError}
+                  </p>
+                )}
+
+                {customerAppointmentActionMessage && (
+                  <p className="success-message" role="status">
+                    {customerAppointmentActionMessage}
+                  </p>
+                )}
+
+                {customerAppointmentsLoading &&
+                customerAppointments.length === 0 ? (
+                  <p>Loading your appointments...</p>
+                ) : customerAppointments.length > 0 ? (
+                  <>
+                    <div className="admin-table-wrapper">
+                      <table className="admin-table">
+                        <thead>
+                          <tr>
+                            <th>Barber</th>
+                            <th>Service</th>
+                            <th>Price</th>
+                            <th>Date</th>
+                            <th>Time</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerAppointments.map((appointment) => {
+                            const canCancel = appointment.status === 'pending'
+                            const isCancelling =
+                              customerAppointmentActionLoadingId ===
+                              appointment.id
+
+                            return (
+                              <tr key={appointment.id}>
+                                <td>{appointment.barber?.name || '—'}</td>
+                                <td>{appointment.service?.name || '—'}</td>
+                                <td>
+                                  {appointment.service?.price != null
+                                    ? `₱${Number(
+                                        appointment.service.price
+                                      ).toFixed(2)}`
+                                    : '—'}
+                                </td>
+                                <td>
+                                  {formatAppointmentDate(
+                                    appointment.appointment_date
+                                  )}
+                                </td>
+                                <td>
+                                  {formatAppointmentTime(
+                                    appointment.appointment_time
+                                  )}
+                                </td>
+                                <td>
+                                  <span className="appointment-status">
+                                    {formatStatus(appointment.status)}
+                                  </span>
+                                </td>
+                                <td>
+                                  {canCancel ? (
+                                    <button
+                                      type="button"
+                                      style={actionButtonStyle}
+                                      disabled={
+                                        customerAppointmentActionLoadingId !==
+                                        null
+                                      }
+                                      onClick={() =>
+                                        handleCustomerAppointmentCancel(
+                                          appointment
+                                        )
+                                      }
+                                    >
+                                      {isCancelling
+                                        ? 'Cancelling...'
+                                        : 'Cancel Appointment'}
+                                    </button>
+                                  ) : (
+                                    <span
+                                      style={{
+                                        color: '#6b7280',
+                                        fontSize: '12px',
+                                      }}
+                                    >
+                                      No actions available
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {customerAppointmentPagination && (
+                      <div className="pagination-controls">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCustomerAppointmentPage((page) =>
+                              Math.max(1, page - 1)
+                            )
+                          }
+                          disabled={
+                            customerAppointmentPagination.current_page <= 1 ||
+                            customerAppointmentsLoading
+                          }
+                        >
+                          Previous
+                        </button>
+                        <span>
+                          Page {customerAppointmentPagination.current_page} of{' '}
+                          {customerAppointmentPagination.last_page}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCustomerAppointmentPage((page) =>
+                              Math.min(
+                                customerAppointmentPagination.last_page,
+                                page + 1
+                              )
+                            )
+                          }
+                          disabled={
+                            customerAppointmentPagination.current_page >=
+                              customerAppointmentPagination.last_page ||
+                            customerAppointmentsLoading
+                          }
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  !customerAppointmentsLoading && (
+                    <p>
+                      You have no appointments yet. Book an appointment above
+                      and it will appear here.
+                    </p>
+                  )
+                )}
+              </section>
+            )}
+
             <section className="booking-banner" id="booking">
               <p className="eyebrow">READY FOR A FRESH LOOK?</p>
               <h2>Your Next Great Haircut Starts Here.</h2>
@@ -1099,7 +1729,7 @@ function App() {
                 </div>
               )}
 
-              {user?.role === 'customer' && (
+              {isCustomer && (
                 <div
                   className="login-card"
                   style={{
