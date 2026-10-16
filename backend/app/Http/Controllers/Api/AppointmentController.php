@@ -10,6 +10,7 @@ use App\Models\Barber;
 use App\Models\Service;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class AppointmentController extends Controller
@@ -23,7 +24,7 @@ class AppointmentController extends Controller
         $appointments = Appointment::query()
             ->with([
                 'customer:id,name,email',
-                'barber:id,name',
+                'barber:id,name,is_available',
                 'service:id,name,price',
             ])
             ->when(
@@ -89,7 +90,7 @@ class AppointmentController extends Controller
             'message' => 'Appointment created successfully.',
             'data' => $appointment->load([
                 'customer:id,name,email',
-                'barber:id,name',
+                'barber:id,name,is_available',
                 'service:id,name,price',
             ]),
         ], 201);
@@ -115,7 +116,65 @@ class AppointmentController extends Controller
         return response()->json([
             'data' => $appointment->load([
                 'customer:id,name,email',
-                'barber:id,name',
+                'barber:id,name,is_available',
+                'service:id,name,price',
+            ]),
+        ]);
+    }
+
+    public function complete(
+        Request $request,
+        Appointment $appointment
+    ): JsonResponse {
+        $user = $request->user();
+
+        if ($user->role !== 'customer') {
+            return response()->json([
+                'message' => 'Only customers can use this completion action.',
+            ], 403);
+        }
+
+        if ($appointment->user_id !== $user->id) {
+            return response()->json([
+                'message' => 'You are not authorized to complete this appointment.',
+            ], 403);
+        }
+
+        if ($appointment->status !== 'confirmed') {
+            return response()->json([
+                'message' => 'Only confirmed appointments can be marked as done.',
+            ], 422);
+        }
+
+        $appointmentDateTime = Carbon::parse(
+            $appointment->appointment_date->toDateString()
+            . ' '
+            . substr((string) $appointment->appointment_time, 0, 8)
+        );
+
+        if ($appointmentDateTime->isFuture()) {
+            return response()->json([
+                'message' => 'You can mark this appointment as done only after its scheduled date and time.',
+            ], 422);
+        }
+
+        $updated = Appointment::query()
+            ->whereKey($appointment->id)
+            ->where('user_id', $user->id)
+            ->where('status', 'confirmed')
+            ->update(['status' => 'completed']);
+
+        if (! $updated) {
+            return response()->json([
+                'message' => 'This appointment could not be completed. Please refresh and try again.',
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => 'Appointment marked as done successfully.',
+            'data' => $appointment->fresh()->load([
+                'customer:id,name,email',
+                'barber:id,name,is_available',
                 'service:id,name,price',
             ]),
         ]);
@@ -219,7 +278,7 @@ class AppointmentController extends Controller
             'message' => 'Appointment updated successfully.',
             'data' => $appointment->fresh()->load([
                 'customer:id,name,email',
-                'barber:id,name',
+                'barber:id,name,is_available',
                 'service:id,name,price',
             ]),
         ]);
@@ -252,7 +311,7 @@ class AppointmentController extends Controller
                 'message' => 'Appointment cancelled successfully.',
                 'data' => $appointment->fresh()->load([
                     'customer:id,name,email',
-                    'barber:id,name',
+                    'barber:id,name,is_available',
                     'service:id,name,price',
                 ]),
             ]);

@@ -143,8 +143,40 @@ function formatStatus(status) {
     .join(' ')
 }
 
+// Check whether the appointment's scheduled local date and time have arrived.
+function hasAppointmentTimeArrived(dateValue, timeValue) {
+  if (!dateValue || !timeValue) return false
+
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateValue)
+  const timeMatch = /^(\d{1,2}):(\d{2})/.exec(timeValue)
+
+  if (!dateMatch || !timeMatch) return false
+
+  const [, year, month, day] = dateMatch
+  const hours = Number(timeMatch[1])
+  const minutes = Number(timeMatch[2])
+
+  if (hours > 23 || minutes > 59) return false
+
+  const appointmentDateTime = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    hours,
+    minutes,
+    0,
+    0
+  )
+
+  return appointmentDateTime.getTime() <= Date.now()
+}
+
 function App() {
   const [barbers, setBarbers] = useState([])
+
+  // All barber pages for the booking dropdown.
+  const [bookingBarbers, setBookingBarbers] = useState([])
+
   const [services, setServices] = useState([])
   const [dashboardData, setDashboardData] = useState(null)
   const [dashboardError, setDashboardError] = useState('')
@@ -163,7 +195,7 @@ function App() {
   const [barberAvailabilityMessage, setBarberAvailabilityMessage] =
     useState('')
 
-  // Customer appointment history and cancellation.
+  // Customer appointment history, cancellation, and completion.
   const [customerAppointments, setCustomerAppointments] = useState([])
   const [customerAppointmentPagination, setCustomerAppointmentPagination] =
     useState(null)
@@ -233,7 +265,7 @@ function App() {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
   }, [])
 
-  // Load public barber information.
+  // Load public barber information for the paginated barber cards.
   useEffect(() => {
     const controller = new AbortController()
 
@@ -246,7 +278,7 @@ function App() {
           { signal: controller.signal }
         )
 
-        setBarbers(response.data.data)
+        setBarbers(response.data.data ?? [])
         setBarberPagination(response.data)
       } catch (err) {
         if (!axios.isCancel(err)) {
@@ -264,6 +296,47 @@ function App() {
     void loadBarbers()
     return () => controller.abort()
   }, [barberPage])
+
+  // Load every barber page separately for the booking dropdown.
+  // This does not change the pagination of the public barber cards.
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadAllBookingBarbers() {
+      try {
+        const firstResponse = await axios.get(`${API_URL}/barbers?page=1`, {
+          signal: controller.signal,
+        })
+
+        const allBarbers = [...(firstResponse.data.data ?? [])]
+        const lastPage = Number(firstResponse.data.last_page ?? 1)
+
+        for (let page = 2; page <= lastPage; page += 1) {
+          const response = await axios.get(
+            `${API_URL}/barbers?page=${page}`,
+            { signal: controller.signal }
+          )
+
+          allBarbers.push(...(response.data.data ?? []))
+        }
+
+        if (!controller.signal.aborted) {
+          setBookingBarbers(allBarbers)
+        }
+      } catch (err) {
+        if (!axios.isCancel(err) && !controller.signal.aborted) {
+          console.error('Unable to load all booking barbers:', err)
+          setError(
+            'Unable to load data. Please check that the Laravel server is running.'
+          )
+        }
+      }
+    }
+
+    void loadAllBookingBarbers()
+
+    return () => controller.abort()
+  }, [])
 
   // Load public service information.
   useEffect(() => {
@@ -362,7 +435,7 @@ function App() {
   }, [user?.id, user?.role])
 
   // Fetch only the authenticated customer's appointments.
-  // Laravel's index() endpoint applies the user_id ownership filter.
+  // The API returns each appointment's current barber availability.
   useEffect(() => {
     if (!isCustomer) {
       setCustomerAppointments([])
@@ -470,6 +543,59 @@ function App() {
       setCustomerAppointmentActionError(
         err.response?.data?.message ||
           'Unable to cancel this appointment. Please try again.'
+      )
+    } finally {
+      setCustomerAppointmentActionLoadingId(null)
+    }
+  }
+
+  // Allow customers to mark their own eligible confirmed appointment as done.
+  async function handleCustomerAppointmentComplete(appointment) {
+    if (!isCustomer || appointment.status !== 'confirmed') {
+      setCustomerAppointmentActionError(
+        'Only your own confirmed appointments can be marked as done.'
+      )
+      return
+    }
+
+    if (
+      !hasAppointmentTimeArrived(
+        appointment.appointment_date,
+        appointment.appointment_time
+      )
+    ) {
+      setCustomerAppointmentActionError(
+        'You can mark this appointment as done only after its scheduled date and time.'
+      )
+      return
+    }
+
+    const shouldContinue = window.confirm(
+      `Have you received your haircut for the appointment with ${
+        appointment.barber?.name || 'this barber'
+      }? Confirming will mark this appointment as completed.`
+    )
+
+    if (!shouldContinue) return
+
+    setCustomerAppointmentActionLoadingId(appointment.id)
+    setCustomerAppointmentActionError('')
+    setCustomerAppointmentActionMessage('')
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/appointments/${appointment.id}/complete`
+      )
+
+      setCustomerAppointmentActionMessage(
+        response.data.message || 'Appointment marked as done successfully.'
+      )
+
+      await refreshCustomerAppointments()
+    } catch (err) {
+      setCustomerAppointmentActionError(
+        err.response?.data?.message ||
+          'Unable to mark this appointment as done. Please try again.'
       )
     } finally {
       setCustomerAppointmentActionLoadingId(null)
@@ -642,6 +768,24 @@ function App() {
       )
       setBarbers(barbersResponse.data.data)
       setBarberPagination(barbersResponse.data)
+
+      // Keep the booking dropdown's barber availability up to date.
+      const allBookingBarbersResponse = await axios.get(
+        `${API_URL}/barbers?page=1`
+      )
+      const allBookingBarbers = [
+        ...(allBookingBarbersResponse.data.data ?? []),
+      ]
+      const lastPage = Number(
+        allBookingBarbersResponse.data.last_page ?? 1
+      )
+
+      for (let page = 2; page <= lastPage; page += 1) {
+        const response = await axios.get(`${API_URL}/barbers?page=${page}`)
+        allBookingBarbers.push(...(response.data.data ?? []))
+      }
+
+      setBookingBarbers(allBookingBarbers)
 
       setBarberAvailabilityMessage(
         updateResponse.data.message ||
@@ -1522,7 +1666,10 @@ function App() {
 
             {/* Customer-only appointment history. */}
             {isCustomer && (
-              <section className="section admin-table-section" id="my-appointments">
+              <section
+                className="section admin-table-section"
+                id="my-appointments"
+              >
                 <div className="section-heading">
                   <div>
                     <p className="eyebrow">YOUR BOOKINGS</p>
@@ -1581,13 +1728,58 @@ function App() {
                         <tbody>
                           {customerAppointments.map((appointment) => {
                             const canCancel = appointment.status === 'pending'
+
+                            const canMarkDone =
+                              appointment.status === 'confirmed' &&
+                              hasAppointmentTimeArrived(
+                                appointment.appointment_date,
+                                appointment.appointment_time
+                              )
+
                             const isCancelling =
                               customerAppointmentActionLoadingId ===
                               appointment.id
 
+                            const barberUnavailable =
+                              appointment.barber?.is_available === false
+
                             return (
                               <tr key={appointment.id}>
-                                <td>{appointment.barber?.name || '—'}</td>
+                                <td>
+                                  <div>{appointment.barber?.name || '—'}</div>
+
+                                  {barberUnavailable && (
+                                    <div
+                                      role="status"
+                                      style={{
+                                        marginTop: '8px',
+                                        padding: '10px',
+                                        border: '1px solid #f59e0b',
+                                        borderRadius: '6px',
+                                        backgroundColor: '#fffbeb',
+                                        color: '#92400e',
+                                        fontSize: '12px',
+                                        lineHeight: 1.5,
+                                        minWidth: '220px',
+                                        whiteSpace: 'normal',
+                                      }}
+                                    >
+                                      <strong>
+                                        Barber Availability Notice
+                                      </strong>
+                                      <p style={{ margin: '5px 0 0' }}>
+                                        {appointment.barber?.name ||
+                                          'Your barber'}{' '}
+                                        is currently unavailable. Your
+                                        appointment remains recorded as{' '}
+                                        {formatStatus(appointment.status)}.
+                                        Please contact the shop to confirm
+                                        whether your appointment will proceed
+                                        or needs to be rescheduled.
+                                      </p>
+                                    </div>
+                                  )}
+                                </td>
                                 <td>{appointment.service?.name || '—'}</td>
                                 <td>
                                   {appointment.service?.price != null
@@ -1612,7 +1804,7 @@ function App() {
                                   </span>
                                 </td>
                                 <td>
-                                  {canCancel ? (
+                                  {canCancel && (
                                     <button
                                       type="button"
                                       style={actionButtonStyle}
@@ -1630,7 +1822,34 @@ function App() {
                                         ? 'Cancelling...'
                                         : 'Cancel Appointment'}
                                     </button>
-                                  ) : (
+                                  )}
+
+                                  {canMarkDone && (
+                                    <button
+                                      type="button"
+                                      style={{
+                                        ...actionButtonStyle,
+                                        backgroundColor: '#ecfdf5',
+                                        borderColor: '#86efac',
+                                        color: '#166534',
+                                      }}
+                                      disabled={
+                                        customerAppointmentActionLoadingId !==
+                                        null
+                                      }
+                                      onClick={() =>
+                                        handleCustomerAppointmentComplete(
+                                          appointment
+                                        )
+                                      }
+                                    >
+                                      {isCancelling
+                                        ? 'Completing...'
+                                        : 'Mark as Done'}
+                                    </button>
+                                  )}
+
+                                  {!canCancel && !canMarkDone && (
                                     <span
                                       style={{
                                         color: '#6b7280',
@@ -1753,7 +1972,7 @@ function App() {
                       required
                     >
                       <option value="">Select a barber</option>
-                      {barbers
+                      {bookingBarbers
                         .filter((barber) => barber.is_available)
                         .map((barber) => (
                           <option key={barber.id} value={barber.id}>

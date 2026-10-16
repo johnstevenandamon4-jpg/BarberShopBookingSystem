@@ -26,6 +26,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
 
     // Appointment management
+    Route::post(
+        '/appointments/{appointment}/complete',
+        [AppointmentController::class, 'complete']
+    );
+
     Route::apiResource('appointments', AppointmentController::class);
 
     // Administrator-only routes
