@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
 import './App.css'
+import LoginPage from './pages/LoginPage'
+import AdminDashboard from './pages/AdminDashboard'
+import HomePage from './pages/HomePage'
+import MyAppointments from './pages/MyAppointments'
 
 const API_URL = 'http://127.0.0.1:8000/api'
 const GMAIL_PATTERN = /^[A-Z0-9]+(?:\.[A-Z0-9]+)*@gmail\.com$/i
@@ -143,52 +147,35 @@ function formatStatus(status) {
     .join(' ')
 }
 
-function getAppointmentActions(appointment) {
-  if (appointment.status === 'pending') {
-    return [
-      { label: 'Confirm', status: 'confirmed' },
-      { label: 'Cancel', status: 'cancelled' },
-    ]
-  }
+// Check whether the appointment's scheduled local date and time have arrived.
+function hasAppointmentTimeArrived(dateValue, timeValue) {
+  if (!dateValue || !timeValue) return false
 
-  if (appointment.status === 'confirmed') {
-    return [
-      { label: 'Complete', status: 'completed' },
-      { label: 'Cancel', status: 'cancelled' },
-      { label: 'Mark No-Show', status: 'no_show' },
-    ]
-  }
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateValue)
+  const timeMatch = /^(\d{1,2}):(\d{2})/.exec(timeValue)
 
-  return []
-}
+  if (!dateMatch || !timeMatch) return false
 
-async function fetchAllBookingBarbers(signal) {
-  const firstResponse = await axios.get(`${API_URL}/barbers?page=1`, {
-    ...(signal ? { signal } : {}),
-  })
-  const allBarbers = [...(firstResponse.data.data ?? [])]
-  const lastPage = Number(firstResponse.data.last_page ?? 1)
-  const pageNumbers = Array.from(
-    { length: Math.max(0, lastPage - 1) },
-    (_, index) => index + 2
-  )
-  const responses = await Promise.all(
-    pageNumbers.map((page) =>
-      axios.get(`${API_URL}/barbers?page=${page}`, {
-        ...(signal ? { signal } : {}),
-      })
-    )
+  const [, year, month, day] = dateMatch
+  const hours = Number(timeMatch[1])
+  const minutes = Number(timeMatch[2])
+
+  if (hours > 23 || minutes > 59) return false
+
+  const appointmentDateTime = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    hours,
+    minutes,
+    0,
+    0
   )
 
-  responses.forEach((response) => {
-    allBarbers.push(...(response.data.data ?? []))
-  })
-
-  return allBarbers
+  return appointmentDateTime.getTime() <= Date.now()
 }
 
 function App() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [barbers, setBarbers] = useState([])
 
   // All barber pages for the booking dropdown.
@@ -335,7 +322,21 @@ function App() {
 
     async function loadAllBookingBarbers() {
       try {
-        const allBarbers = await fetchAllBookingBarbers(controller.signal)
+        const firstResponse = await axios.get(`${API_URL}/barbers?page=1`, {
+          signal: controller.signal,
+        })
+
+        const allBarbers = [...(firstResponse.data.data ?? [])]
+        const lastPage = Number(firstResponse.data.last_page ?? 1)
+
+        for (let page = 2; page <= lastPage; page += 1) {
+          const response = await axios.get(
+            `${API_URL}/barbers?page=${page}`,
+            { signal: controller.signal }
+          )
+
+          allBarbers.push(...(response.data.data ?? []))
+        }
 
         if (!controller.signal.aborted) {
           setBookingBarbers(allBarbers)
@@ -401,7 +402,7 @@ function App() {
         setUser(response.data.user ?? response.data)
       } catch {
         localStorage.removeItem('barber_token')
-                delete axios.defaults.headers.common.Authorization
+        delete axios.defaults.headers.common.Authorization
       }
     }
 
@@ -604,7 +605,7 @@ function App() {
       setCustomerNotifications((currentNotifications) =>
         currentNotifications.map((item) =>
           item.id === notification.id
-            ? { ...item, ...response.data.data, read_at: response.data.data?.read_at ?? new Date().toISOString() }
+            ? { ...item, ...(response.data.data ?? {}), read_at: response.data.data?.read_at ?? new Date().toISOString() }
             : item
         )
       )
@@ -663,6 +664,58 @@ function App() {
     }
   }
 
+  // Allow customers to mark their own eligible confirmed appointment as done.
+  async function handleCustomerAppointmentComplete(appointment) {
+    if (!isCustomer || appointment.status !== 'confirmed') {
+      setCustomerAppointmentActionError(
+        'Only your own confirmed appointments can be marked as done.'
+      )
+      return
+    }
+
+    if (
+      !hasAppointmentTimeArrived(
+        appointment.appointment_date,
+        appointment.appointment_time
+      )
+    ) {
+      setCustomerAppointmentActionError(
+        'You can mark this appointment as done only after its scheduled date and time.'
+      )
+      return
+    }
+
+    const shouldContinue = window.confirm(
+      `Have you received your haircut for the appointment with ${
+        appointment.barber?.name || 'this barber'
+      }? Confirming will mark this appointment as completed.`
+    )
+
+    if (!shouldContinue) return
+
+    setCustomerAppointmentActionLoadingId(appointment.id)
+    setCustomerAppointmentActionError('')
+    setCustomerAppointmentActionMessage('')
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/appointments/${appointment.id}/complete`
+      )
+
+      setCustomerAppointmentActionMessage(
+        response.data.message || 'Appointment marked as done successfully.'
+      )
+
+      await refreshCustomerAppointments()
+    } catch (err) {
+      setCustomerAppointmentActionError(
+        err.response?.data?.message ||
+          'Unable to mark this appointment as done. Please try again.'
+      )
+    } finally {
+      setCustomerAppointmentActionLoadingId(null)
+    }
+  }
 
   function openLogin(type) {
     setLoginType(type)
@@ -748,6 +801,7 @@ function App() {
     } finally {
       localStorage.removeItem('barber_token')
       delete axios.defaults.headers.common.Authorization
+
       setUser(null)
       setDashboardData(null)
       setDashboardError('')
@@ -842,7 +896,21 @@ function App() {
       setBarberPagination(barbersResponse.data)
 
       // Keep the booking dropdown's barber availability up to date.
-      const allBookingBarbers = await fetchAllBookingBarbers()
+      const allBookingBarbersResponse = await axios.get(
+        `${API_URL}/barbers?page=1`
+      )
+      const allBookingBarbers = [
+        ...(allBookingBarbersResponse.data.data ?? []),
+      ]
+      const lastPage = Number(
+        allBookingBarbersResponse.data.last_page ?? 1
+      )
+
+      for (let page = 2; page <= lastPage; page += 1) {
+        const response = await axios.get(`${API_URL}/barbers?page=${page}`)
+        allBookingBarbers.push(...(response.data.data ?? []))
+      }
+
       setBookingBarbers(allBookingBarbers)
 
       setBarberAvailabilityMessage(
@@ -941,7 +1009,7 @@ function App() {
     setBookingError('')
     setBookingMessage('')
 
-    if (user?.role !== 'customer') {
+    if (!user || user.role !== 'customer') {
       setBookingError('Please log in with a customer account to book.')
       return
     }
@@ -1016,20 +1084,6 @@ function App() {
     return `${year}-${month}-${day}`
   })()
 
-  let notificationListMode = 'empty'
-  if (customerNotificationsLoading && customerNotifications.length === 0) {
-    notificationListMode = 'loading'
-  } else if (customerNotifications.length > 0) {
-    notificationListMode = 'items'
-  }
-
-  let appointmentListMode = 'empty'
-  if (customerAppointmentsLoading && customerAppointments.length === 0) {
-    appointmentListMode = 'loading'
-  } else if (customerAppointments.length > 0) {
-    appointmentListMode = 'items'
-  }
-
   const summaryCards = [
     ['Total Bookings', dashboardData?.summary?.total_bookings],
     ['Pending', dashboardData?.summary?.pending_bookings],
@@ -1038,6 +1092,25 @@ function App() {
     ['Cancelled', dashboardData?.summary?.cancelled_bookings],
     ['No-Shows', dashboardData?.summary?.no_show_bookings],
   ]
+
+  function getAppointmentActions(appointment) {
+    if (appointment.status === 'pending') {
+      return [
+        { label: 'Confirm', status: 'confirmed' },
+        { label: 'Cancel', status: 'cancelled' },
+      ]
+    }
+
+    if (appointment.status === 'confirmed') {
+      return [
+        { label: 'Complete', status: 'completed' },
+        { label: 'Cancel', status: 'cancelled' },
+        { label: 'Mark No-Show', status: 'no_show' },
+      ]
+    }
+
+    return []
+  }
 
   const actionButtonStyle = {
     padding: '7px 10px',
@@ -1062,1321 +1135,9 @@ function App() {
 
   return (
     <div className="app">
-      <style>{`
-        .app main section[id] { scroll-margin-top: 100px; }
-        .app .navbar {
-          position: sticky;
-          top: 0;
-          z-index: 1000;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 24px;
-          padding: 14px clamp(18px, 4vw, 56px);
-          background: rgba(23, 23, 23, 0.97);
-          color: #f8f5f0;
-          border-bottom: 1px solid rgba(214, 165, 108, 0.28);
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-          backdrop-filter: blur(12px);
-        }
-        .app .navbar .brand {
-          display: inline-flex;
-          align-items: center;
-          flex-shrink: 0;
-          gap: 0;
-          color: #fff;
-          text-decoration: none;
-          font-size: 1.3rem;
-          font-weight: 900;
-          letter-spacing: 1.5px;
-          white-space: nowrap;
-        }
-        .app .navbar .brand::before {
-          content: '✂';
-          display: inline-grid;
-          place-items: center;
-          width: 38px;
-          height: 38px;
-          margin-right: 10px;
-          border-radius: 10px;
-          background: #d6a56c;
-          color: #171717;
-          font-size: 21px;
-          letter-spacing: 0;
-        }
-        .app .navbar .brand span { color: #d6a56c; }
-        .app .navbar .navbar-links {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 5px;
-          margin: 0 auto;
-        }
-        .app .navbar .navbar-links a {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 4px;
-          padding: 10px 11px;
-          border-radius: 8px;
-          color: #e7e2dc;
-          text-decoration: none;
-          font-size: 0.9rem;
-          font-weight: 600;
-          white-space: nowrap;
-          transition: color 160ms ease, background 160ms ease;
-        }
-        .app .navbar .navbar-links a:hover,
-        .app .navbar .navbar-links a:focus-visible {
-          color: #f2c58e;
-          background: rgba(214, 165, 108, 0.12);
-          outline: none;
-        }
-        .app .navbar .notification-count {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-width: 19px;
-          height: 19px;
-          padding: 0 5px;
-          border-radius: 999px;
-          background: #c43d35;
-          color: #fff;
-          font-size: 11px;
-          font-weight: 800;
-          line-height: 1;
-        }
-        .app .navbar .navbar-actions {
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          gap: 9px;
-          flex-shrink: 0;
-        }
-        .app .navbar .navbar-greeting {
-          color: #f0e8df;
-          font-size: 0.88rem;
-          font-weight: 600;
-          white-space: nowrap;
-        }
-        .app .navbar .nav-button {
-          border: 1px solid #d6a56c;
-          border-radius: 9px;
-          padding: 10px 16px;
-          background: #d6a56c;
-          color: #171717;
-          font-size: 0.88rem;
-          font-weight: 800;
-          cursor: pointer;
-          white-space: nowrap;
-          transition: transform 160ms ease, background 160ms ease;
-        }
-        .app .navbar .nav-button:hover {
-          background: #e6b982;
-          transform: translateY(-1px);
-        }
-        .app .navbar .nav-button:focus-visible,
-        .app .navbar .menu-toggle:focus-visible {
-          outline: 2px solid #f2c58e;
-          outline-offset: 3px;
-        }
-        .app .navbar .menu-toggle {
-          display: none;
-          align-items: center;
-          justify-content: center;
-          width: 42px;
-          height: 42px;
-          border: 1px solid rgba(214, 165, 108, 0.55);
-          border-radius: 9px;
-          background: transparent;
-          color: #f8f5f0;
-          font-size: 23px;
-          cursor: pointer;
-        }
-        @media (max-width: 1080px) {
-          .app .navbar { gap: 14px; }
-          .app .navbar .navbar-links { gap: 0; }
-          .app .navbar .navbar-links a { padding: 9px 8px; font-size: 0.84rem; }
-          .app .navbar .navbar-greeting { display: none; }
-        }
-        @media (max-width: 820px) {
-          .app .navbar { flex-wrap: wrap; gap: 12px; padding: 12px 18px; }
-          .app .navbar .brand { font-size: 1.12rem; }
-          .app .navbar .brand::before { width: 34px; height: 34px; margin-right: 8px; }
-          .app .navbar .menu-toggle { display: inline-flex; margin-left: auto; }
-          .app .navbar .navbar-links {
-            display: none;
-            order: 3;
-            flex: 0 0 100%;
-            flex-direction: column;
-            align-items: stretch;
-            gap: 4px;
-            width: 100%;
-            margin: 0;
-            padding: 8px 0 2px;
-            border-top: 1px solid rgba(214, 165, 108, 0.2);
-          }
-          .app .navbar .navbar-links.is-open { display: flex; }
-          .app .navbar .navbar-links a {
-            justify-content: flex-start;
-            width: 100%;
-            padding: 12px 13px;
-            font-size: 0.95rem;
-          }
-          .app .navbar .navbar-actions {
-            display: none;
-            order: 4;
-            flex: 0 0 100%;
-            justify-content: flex-start;
-            flex-wrap: wrap;
-            padding: 10px 0 3px;
-            border-top: 1px solid rgba(214, 165, 108, 0.2);
-          }
-          .app .navbar .navbar-actions.is-open { display: flex; }
-          .app .navbar .navbar-greeting { display: inline; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .app .navbar * { transition: none !important; }
-        }
-      `}</style>
-      <header className="navbar">
+      <aside className="sidebar">
         <a
-          className="brand"
-          href={isAdmin ? '#admin-dashboard' : '#home'}
-          onClick={(event) => {
-            scrollToSection(isAdmin ? 'admin-dashboard' : 'home', event)
-            setMobileMenuOpen(false)
-          }}
-          aria-label="BarberBook home"
-        >
-          BARBER<span>BOOK</span>
-        </a>
-
-        {isAdmin ? (
-          <nav className={`navbar-links ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="Administrator navigation">
-            <a href="#admin-dashboard" onClick={(event) => { scrollToSection('admin-dashboard', event); setMobileMenuOpen(false) }}>Dashboard</a>
-            <a href="#barber-statistics" onClick={(event) => { scrollToSection('barber-statistics', event); setMobileMenuOpen(false) }}>Barber Statistics</a>
-            <a href="#recent-appointments" onClick={(event) => { scrollToSection('recent-appointments', event); setMobileMenuOpen(false) }}>Recent Appointments</a>
-          </nav>
-        ) : (
-          <nav className={`navbar-links ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="Main navigation">
-            {!isCustomer && <a href="#home" onClick={(event) => { scrollToSection('home', event); setMobileMenuOpen(false) }}>Home</a>}
-            <a href="#services" onClick={(event) => { scrollToSection('services', event); setMobileMenuOpen(false) }}>Services</a>
-            <a href="#barbers" onClick={(event) => { scrollToSection('barbers', event); setMobileMenuOpen(false) }}>Our Barbers</a>
-            {isCustomer && (
-              <>
-                <a href="#customer-notifications" onClick={(event) => { scrollToSection('customer-notifications', event); setMobileMenuOpen(false) }}>
-                  Notifications
-                  {customerNotifications.some((notification) => !notification.read_at) && (
-                    <span className="notification-count" aria-label={`${customerNotifications.filter((notification) => !notification.read_at).length} unread notifications`}>
-                      {customerNotifications.filter((notification) => !notification.read_at).length}
-                    </span>
-                  )}
-                </a>
-                <a href="#my-appointments" onClick={(event) => { scrollToSection('my-appointments', event); setMobileMenuOpen(false) }}>My Appointments</a>
-              </>
-            )}
-            <a className="book-nav-link" href="#booking" onClick={(event) => { scrollToSection('booking', event); setMobileMenuOpen(false) }}>Booking</a>
-          </nav>
-        )}
-
-        <button
-          type="button"
-          className="menu-toggle"
-          aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
-          aria-expanded={mobileMenuOpen}
-          onClick={() => setMobileMenuOpen((open) => !open)}
-        >
-          {mobileMenuOpen ? '×' : '☰'}
-        </button>
-
-        {user ? (
-          <div className={`navbar-actions account-actions ${mobileMenuOpen ? 'is-open' : ''}`}>
-            <span className="navbar-greeting">Hi, {user.name}</span>
-            <span style={getRoleBadgeStyle(user.role)}>{getRoleLabel(user.role)}</span>
-            <button className="nav-button" onClick={handleLogout}>Logout</button>
-          </div>
-        ) : (
-          <div className={`navbar-actions ${mobileMenuOpen ? 'is-open' : ''}`}>
-            <button className="nav-button" onClick={() => { openLogin(loginType); setMobileMenuOpen(false) }}>
-              {showLogin ? 'Login Open' : 'Login'}
-            </button>
-          </div>
-        )}
-      </header>
-
-      <main>
-        {showLogin && !user && (
-          <section className="login-section" id="login">
-            <div className="login-card">
-              <p className="eyebrow">WELCOME BACK</p>
-              <h2>Login to BarberBook</h2>
-              <p>Choose your account type to continue.</p>
-
-              <fieldset
-                aria-label="Choose login type"
-                style={{
-                  display: 'flex',
-                  gap: '10px',
-                  marginTop: '20px',
-                  marginBottom: '24px',
-                  padding: 0,
-                  border: 'none',
-                  minWidth: 0,
-                }}
-              >
-                <button
-                  type="button"
-                  style={selectorButtonStyle('admin')}
-                  aria-pressed={loginType === 'admin'}
-                  onClick={() => {
-                    setLoginType('admin')
-                    setLoginError('')
-                  }}
-                >
-                  Admin Login
-                </button>
-
-                <button
-                  type="button"
-                  style={selectorButtonStyle('customer')}
-                  aria-pressed={loginType === 'customer'}
-                  onClick={() => {
-                    setLoginType('customer')
-                    setLoginError('')
-                  }}
-                >
-                  Customer Login
-                </button>
-              </fieldset>
-
-              <p style={{ marginBottom: '16px' }}>
-                Selected:{' '}
-                <strong>
-                  {loginType === 'admin' ? 'Administrator' : 'Customer'}
-                </strong>
-              </p>
-
-              <form onSubmit={handleLogin} noValidate>
-                <label htmlFor="login-email">Gmail Address</label>
-                <input
-                  id="login-email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="Enter your Gmail address"
-                  autoComplete="username"
-                  required
-                />
-
-                <label htmlFor="login-password">Password</label>
-                <input
-                  id="login-password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  required
-                />
-
-                {loginError && (
-                  <p className="error-message" role="alert">
-                    {loginError}
-                  </p>
-                )}
-
-                <button
-                  className="primary-button login-submit"
-                  type="submit"
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? 'Signing in...' : loginButtonText}
-                </button>
-              </form>
-            </div>
-          </section>
-        )}
-
-        {loginMessage && (
-          <output className="success-message" style={{ display: 'block' }}>
-            {loginMessage}
-          </output>
-        )}
-
-        {/* ADMIN INTERFACE */}
-        {isAdmin && (
-          <>
-            <section className="admin-welcome">
-              <p className="eyebrow">ADMINISTRATION</p>
-              <h1>Administrator Dashboard</h1>
-              <p>
-                Welcome, {user.name}. Review booking statistics and recent
-                appointments from this page.
-              </p>
-              <span style={getRoleBadgeStyle(user.role)}>ADMINISTRATOR</span>
-            </section>
-
-            <section className="section admin-dashboard" id="admin-dashboard">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">OVERVIEW</p>
-                  <h2>Booking Summary</h2>
-                </div>
-
-                <button
-                  className="nav-button"
-                  type="button"
-                  onClick={handleRefreshDashboard}
-                  disabled={dashboardLoading}
-                >
-                  {dashboardLoading ? 'Refreshing...' : 'Refresh Data'}
-                </button>
-              </div>
-
-              {dashboardError && (
-                <p className="error-message" role="alert">
-                  {dashboardError}
-                </p>
-              )}
-
-              {dashboardLoading && !dashboardData && (
-                <p>Loading dashboard data...</p>
-              )}
-
-              {!dashboardLoading && !dashboardData && !dashboardError && (
-                <p>Dashboard data is not available yet.</p>
-              )}
-
-              {dashboardData && (
-                <div className="dashboard-summary-grid">
-                  {summaryCards.map(([label, value]) => (
-                    <article className="dashboard-stat-card" key={label}>
-                      <p>{label}</p>
-                      <h3>{value ?? 0}</h3>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {dashboardData && (
-              <>
-                <section
-                  className="section admin-table-section"
-                  id="barber-statistics"
-                >
-                  <div className="section-heading">
-                    <div>
-                      <p className="eyebrow">TEAM PERFORMANCE</p>
-                      <h2>Bookings by Barber</h2>
-                    </div>
-                  </div>
-
-                  {barberAvailabilityError && (
-                    <p className="error-message" role="alert">
-                      {barberAvailabilityError}
-                    </p>
-                  )}
-
-                  {barberAvailabilityMessage && (
-                    <output className="success-message" style={{ display: 'block' }}>
-                      {barberAvailabilityMessage}
-                    </output>
-                  )}
-
-                  {dashboardData.bookings_by_barber?.length ? (
-                    <div className="admin-table-wrapper">
-                      <table className="admin-table">
-                        <thead>
-                          <tr>
-                            <th>Barber</th>
-                            <th>Total Bookings</th>
-                            <th>Availability</th>
-                            <th>Manage Availability</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dashboardData.bookings_by_barber.map((barber) => {
-                            const isAvailable = Boolean(barber.is_available)
-                            const isUpdating =
-                              barberAvailabilityLoadingId === barber.id
-                            let availabilityActionLabel = isAvailable
-                              ? 'Mark Unavailable'
-                              : 'Mark Available'
-                            if (isUpdating) {
-                              availabilityActionLabel = 'Updating...'
-                            }
-
-                            return (
-                              <tr key={barber.id}>
-                                <td>{barber.name}</td>
-                                <td>{barber.appointments_count ?? 0}</td>
-                                <td>
-                                  <span
-                                    className={
-                                      isAvailable
-                                        ? 'status available'
-                                        : 'status unavailable'
-                                    }
-                                  >
-                                    {isAvailable
-                                      ? 'Available'
-                                      : 'Unavailable'}
-                                  </span>
-                                </td>
-                                <td>
-                                  <button
-                                    type="button"
-                                    style={availabilityButtonStyle(isAvailable)}
-                                    disabled={
-                                      barberAvailabilityLoadingId !== null ||
-                                      appointmentActionLoadingId !== null ||
-                                      dashboardLoading
-                                    }
-                                    onClick={() =>
-                                      handleBarberAvailabilityChange(barber)
-                                    }
-                                  >
-                                    {availabilityActionLabel}
-                                  </button>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p>No barber booking data available.</p>
-                  )}
-                </section>
-
-                <section
-                  className="section admin-table-section"
-                  id="recent-appointments"
-                >
-                  <div className="section-heading">
-                    <div>
-                      <p className="eyebrow">LATEST ACTIVITY</p>
-                      <h2>Recent Appointments</h2>
-                    </div>
-                  </div>
-
-                  {appointmentActionError && (
-                    <p className="error-message" role="alert">
-                      {appointmentActionError}
-                    </p>
-                  )}
-
-                  {appointmentActionMessage && (
-                    <output className="success-message" style={{ display: 'block' }}>
-                      {appointmentActionMessage}
-                    </output>
-                  )}
-
-                  {dashboardData.recent_appointments?.length ? (
-                    <div className="admin-table-wrapper">
-                      <table className="admin-table">
-                        <thead>
-                          <tr>
-                            <th>Customer</th>
-                            <th>Email</th>
-                            <th>Barber</th>
-                            <th>Service</th>
-                            <th>Date</th>
-                            <th>Time</th>
-                            <th>Status</th>
-                            <th>Admin Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dashboardData.recent_appointments.map(
-                            (appointment) => {
-                              const actions =
-                                getAppointmentActions(appointment)
-                              const isUpdating =
-                                appointmentActionLoadingId === appointment.id
-
-                              return (
-                                <tr key={appointment.id}>
-                                  <td>
-                                    {appointment.customer?.name || 'Unknown'}
-                                  </td>
-                                  <td>
-                                    {appointment.customer?.email || '—'}
-                                  </td>
-                                  <td>
-                                    {appointment.barber?.name || '—'}
-                                  </td>
-                                  <td>
-                                    {appointment.service?.name || '—'}
-                                  </td>
-                                  <td>
-                                    {formatAppointmentDate(
-                                      appointment.appointment_date
-                                    )}
-                                  </td>
-                                  <td>
-                                    {formatAppointmentTime(
-                                      appointment.appointment_time
-                                    )}
-                                  </td>
-                                  <td>
-                                    <span className="appointment-status">
-                                      {formatStatus(appointment.status)}
-                                    </span>
-                                  </td>
-                                  <td>
-                                    {actions.length > 0 ? (
-                                      <div style={{ minWidth: '180px' }}>
-                                        {actions.map((action) => (
-                                          <button
-                                            key={action.status}
-                                            type="button"
-                                            style={actionButtonStyle}
-                                            disabled={
-                                              appointmentActionLoadingId !==
-                                                null ||
-                                              barberAvailabilityLoadingId !==
-                                                null ||
-                                              dashboardLoading
-                                            }
-                                            onClick={() =>
-                                              handleAppointmentStatusChange(
-                                                appointment,
-                                                action.status
-                                              )
-                                            }
-                                          >
-                                            {isUpdating
-                                              ? 'Updating...'
-                                              : action.label}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <span
-                                        style={{
-                                          color: '#6b7280',
-                                          fontSize: '12px',
-                                                                                  }}
-                                      >
-                                        No actions available
-                                      </span>
-                                    )}
-                                  </td>
-                                </tr>
-                              )
-                            }
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p>No appointments have been recorded yet.</p>
-                  )}
-                </section>
-              </>
-            )}
-          </>
-        )}
-
-        {/* CUSTOMER/PUBLIC INTERFACE */}
-        {!isAdmin && (
-          <>
-            {user && (
-              <section className="account-panel">
-                <p className="eyebrow">YOUR ACCOUNT</p>
-                <h2>Welcome, {user.name}!</h2>
-                <p>Email: {user.email}</p>
-                <p>
-                  Account type:{' '}
-                  <span style={getRoleBadgeStyle(user.role)}>
-                    {getRoleLabel(user.role)}
-                  </span>
-                </p>
-                <p>You are successfully logged in.</p>
-              </section>
-            )}
-
-            <section className="hero" id="home">
-              <div className="hero-content">
-                <p className="eyebrow">YOUR STYLE, OUR CRAFT</p>
-                <h1>
-                  A Fresh Cut.
-                  <br />
-                  <span>A Better You.</span>
-                </h1>
-                <p className="hero-description">
-                  Find your barber, choose your service, and book your next
-                  visit with ease.
-                </p>
-                <a
-                  className="primary-button"
-                  href="#booking"
-                  onClick={(event) => scrollToSection('booking', event)}
-                >
-                  Book an Appointment →
-                </a>
-              </div>
-
-              <div className="hero-art" aria-label="Barber shop illustration">
-                <div className="pole">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <div className="art-circle">
-                  <div className="scissors">✂</div>
-                  <div className="comb">▤</div>
-                  <p>
-                    CLASSIC CUTS
-                    <br />
-                    MODERN STYLE
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <section className="section" id="services">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">WHAT WE OFFER</p>
-                  <h2>Our Services</h2>
-                </div>
-                <p>Quality grooming for every style.</p>
-              </div>
-
-              {servicesLoading && services.length === 0 ? (
-                <p>Loading services...</p>
-              ) : (
-                <>
-                  <div className="service-grid">
-                    {services.map((service) => (
-                      <article className="service-card" key={service.id}>
-                        <div className="service-icon">✂</div>
-                        <h3>{service.name}</h3>
-                        <p>
-                          {service.description ||
-                            'Professional barber service.'}
-                        </p>
-                        <div className="service-bottom">
-                          <strong>
-                            ₱{Number(service.price).toFixed(2)}
-                          </strong>
-                          <span>{service.duration_minutes} min</span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-
-                  {servicePagination && (
-                    <div className="pagination-controls">
-                      <button
-                        onClick={() =>
-                          setServicePage((page) => Math.max(1, page - 1))
-                        }
-                        disabled={servicePagination.current_page <= 1}
-                      >
-                        Previous
-                      </button>
-                      <span>
-                        Page {servicePagination.current_page} of{' '}
-                        {servicePagination.last_page}
-                      </span>
-                      <button
-                        onClick={() =>
-                          setServicePage((page) =>
-                            Math.min(servicePagination.last_page, page + 1)
-                          )
-                        }
-                        disabled={
-                          servicePagination.current_page >=
-                          servicePagination.last_page
-                        }
-                      >
-                        Next
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-
-            <section className="section barbers-section" id="barbers">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">MEET THE TEAM</p>
-                  <h2>Our Barbers</h2>
-                </div>
-                <p>Experienced hands. Sharp results.</p>
-              </div>
-
-              {barbersLoading && barbers.length === 0 ? (
-                <p>Loading barbers...</p>
-              ) : (
-                <>
-                  <div className="barber-grid">
-                    {barbers.map((barber) => (
-                      <article className="barber-card" key={barber.id}>
-                        <div className="barber-avatar">
-                          {barber.name.charAt(0)}
-                        </div>
-                        <h3>{barber.name}</h3>
-                        <p>
-                          {barber.description || 'Professional barber'}
-                        </p>
-                        <span
-                          className={
-                            barber.is_available
-                              ? 'status available'
-                              : 'status unavailable'
-                          }
-                        >
-                          {barber.is_available
-                            ? 'Available'
-                            : 'Currently unavailable'}
-                        </span>
-                      </article>
-                    ))}
-                  </div>
-
-                  {barberPagination && (
-                    <div className="pagination-controls">
-                      <button
-                        onClick={() =>
-                          setBarberPage((page) => Math.max(1, page - 1))
-                        }
-                        disabled={barberPagination.current_page <= 1}
-                      >
-                        Previous
-                      </button>
-                      <span>
-                        Page {barberPagination.current_page} of{' '}
-                        {barberPagination.last_page}
-                      </span>
-                      <button
-                        onClick={() =>
-                          setBarberPage((page) =>
-                            Math.min(barberPagination.last_page, page + 1)
-                          )
-                        }
-                        disabled={
-                          barberPagination.current_page >=
-                          barberPagination.last_page
-                        }
-                      >
-                        Next
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-
-            {/* Customer-only persistent notifications. */}
-            {isCustomer && (
-              <section
-                className="section admin-table-section"
-                id="customer-notifications"
-              >
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">ACCOUNT UPDATES</p>
-                    <h2>Notifications</h2>
-                    <p>
-                      Important updates about your appointments appear here and remain available after you log out.
-                    </p>
-                  </div>
-                  <button
-                    className="nav-button"
-                    type="button"
-                    onClick={() => refreshCustomerNotifications()}
-                    disabled={customerNotificationsLoading}
-                  >
-                    {customerNotificationsLoading ? 'Refreshing...' : 'Refresh'}
-                  </button>
-                </div>
-
-                {customerNotificationsError && (
-                  <p className="error-message" role="alert">
-                    {customerNotificationsError}
-                  </p>
-                )}
-
-                {customerNotificationActionMessage && (
-                  <output className="success-message" style={{ display: 'block' }}>
-                    {customerNotificationActionMessage}
-                  </output>
-                )}
-
-                {notificationListMode === 'loading' && (
-                  <p>Loading your notifications...</p>
-                )}
-                {notificationListMode === 'items' && (
-                  <>
-                    <div style={{ display: 'grid', gap: '14px' }}>
-                      {customerNotifications.map((notification) => {
-                        const appointment = notification.appointment
-                        const isMarkingRead = customerNotificationActionLoadingId === notification.id
-
-                        return (
-                          <article
-                            key={notification.id}
-                            style={{
-                              padding: '18px',
-                              border: notification.read_at ? '1px solid #e5e7eb' : '1px solid #f59e0b',
-                              borderLeft: notification.read_at ? '4px solid #9ca3af' : '4px solid #d97706',
-                              borderRadius: '8px',
-                              backgroundColor: notification.read_at ? '#ffffff' : '#fffbeb',
-                            }}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-                              <div>
-                                <h3 style={{ margin: '0 0 8px' }}>{notification.title}</h3>
-                                <p style={{ margin: '0 0 10px', lineHeight: 1.6 }}>{notification.message}</p>
-                                {appointment && (
-                                  <p style={{ margin: '0', color: '#4b5563', fontSize: '13px' }}>
-                                    Appointment: {appointment.service?.name || 'Service'} with {appointment.barber?.name || 'barber'} on {formatAppointmentDate(appointment.appointment_date)} at {formatAppointmentTime(appointment.appointment_time)}. Current status: {formatStatus(appointment.status)}.
-                                  </p>
-                                )}
-                              </div>
-                              <span
-                                style={{
-                                  flexShrink: 0,
-                                  padding: '4px 8px',
-                                  borderRadius: '999px',
-                                  backgroundColor: notification.read_at ? '#e5e7eb' : '#fef3c7',
-                                  color: notification.read_at ? '#374151' : '#92400e',
-                                  fontSize: '12px',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {notification.read_at ? 'Read' : 'Unread'}
-                              </span>
-                            </div>
-                            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                              <span style={{ color: '#6b7280', fontSize: '12px' }}>
-                                {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH') : ''}
-                              </span>
-                              {!notification.read_at && (
-                                <button
-                                  type="button"
-                                  style={{
-                                    padding: '8px 12px',
-                                    border: '1px solid #d1d5db',
-                                    borderRadius: '6px',
-                                    backgroundColor: '#ffffff',
-                                    color: '#1f2937',
-                                    cursor: 'pointer',
-                                  }}
-                                  disabled={customerNotificationActionLoadingId !== null}
-                                  onClick={() => handleMarkNotificationAsRead(notification)}
-                                >
-                                  {isMarkingRead ? 'Marking...' : 'Mark as Read'}
-                                </button>
-                              )}
-                            </div>
-                          </article>
-                        )
-                      })}
-                    </div>
-
-                    {customerNotificationPagination && (
-                      <div className="pagination-controls">
-                        <button
-                          type="button"
-                          onClick={() => setCustomerNotificationPage((page) => Math.max(1, page - 1))}
-                          disabled={customerNotificationPagination.current_page <= 1 || customerNotificationsLoading}
-                        >
-                          Previous
-                        </button>
-                        <span>
-                          Page {customerNotificationPagination.current_page} of {customerNotificationPagination.last_page}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setCustomerNotificationPage((page) => Math.min(customerNotificationPagination.last_page, page + 1))}
-                          disabled={customerNotificationPagination.current_page >= customerNotificationPagination.last_page || customerNotificationsLoading}
-                        >
-                          Next
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-                {notificationListMode === 'empty' && (
-                  <p>You have no notifications right now. If an administrator marks one of your confirmed appointments as No Show, the notice will appear here.</p>
-                )}
-              </section>
-            )}
-
-            {/* Customer-only appointment history. */}
-            {isCustomer && (
-              <section
-                className="section admin-table-section"
-                id="my-appointments"
-              >
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">YOUR BOOKINGS</p>
-                    <h2>My Appointments</h2>
-                    <p>
-                      Review your bookings and check their current status.
-                    </p>
-                  </div>
-
-                  <button
-                    className="nav-button"
-                    type="button"
-                    onClick={() => refreshCustomerAppointments()}
-                    disabled={customerAppointmentsLoading}
-                  >
-                    {customerAppointmentsLoading ? 'Refreshing...' : 'Refresh'}
-                  </button>
-                </div>
-
-                {customerAppointmentsError && (
-                  <p className="error-message" role="alert">
-                    {customerAppointmentsError}
-                  </p>
-                )}
-
-                {customerAppointmentActionError && (
-                  <p className="error-message" role="alert">
-                    {customerAppointmentActionError}
-                  </p>
-                )}
-
-                {customerAppointmentActionMessage && (
-                  <output className="success-message" style={{ display: 'block' }}>
-                    {customerAppointmentActionMessage}
-                  </output>
-                )}
-
-                {appointmentListMode === 'loading' && (
-                  <p>Loading your appointments...</p>
-                )}
-                {appointmentListMode === 'items' && (
-                  <>
-                                      <div className="admin-table-wrapper">
-                      <table className="admin-table">
-                        <thead>
-                          <tr>
-                            <th>Barber</th>
-                            <th>Service</th>
-                            <th>Price</th>
-                            <th>Date</th>
-                            <th>Time</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {customerAppointments.map((appointment) => {
-                            const canCancel = appointment.status === 'pending'
-
-                            const isAppointmentActionLoading =
-                              customerAppointmentActionLoadingId ===
-                              appointment.id
-
-                            const barberUnavailable =
-                              appointment.barber?.is_available === false
-
-                            return (
-                              <tr key={appointment.id}>
-                                <td>
-                                  <div>{appointment.barber?.name || '—'}</div>
-
-                                  {barberUnavailable && (
-                                    <div
-                                      role="status"
-                                      style={{
-                                        marginTop: '8px',
-                                        padding: '10px',
-                                        border: '1px solid #f59e0b',
-                                        borderRadius: '6px',
-                                        backgroundColor: '#fffbeb',
-                                        color: '#92400e',
-                                        fontSize: '12px',
-                                        lineHeight: 1.5,
-                                        minWidth: '220px',
-                                        whiteSpace: 'normal',
-                                      }}
-                                    >
-                                      <strong>
-                                        Barber Availability Notice
-                                      </strong>
-                                      <p style={{ margin: '5px 0 0' }}>
-                                        {appointment.barber?.name ||
-                                          'Your barber'}{' '}
-                                        is currently unavailable. Your
-                                        appointment remains recorded as{' '}
-                                        {formatStatus(appointment.status)}.
-                                        Please contact the shop to confirm
-                                        whether your appointment will proceed
-                                        or needs to be rescheduled.
-                                      </p>
-                                    </div>
-                                  )}
-                                </td>
-                                <td>{appointment.service?.name || '—'}</td>
-                                <td>
-                                  {appointment.service?.price != null
-                                    ? `₱${Number(
-                                        appointment.service.price
-                                      ).toFixed(2)}`
-                                    : '—'}
-                                </td>
-                                <td>
-                                  {formatAppointmentDate(
-                                    appointment.appointment_date
-                                  )}
-                                </td>
-                                <td>
-                                  {formatAppointmentTime(
-                                    appointment.appointment_time
-                                  )}
-                                </td>
-                                <td>
-                                  <span className="appointment-status">
-                                    {formatStatus(appointment.status)}
-                                  </span>
-                                </td>
-                                <td>
-                                  {canCancel && (
-                                    <button
-                                      type="button"
-                                      style={actionButtonStyle}
-                                      disabled={
-                                        customerAppointmentActionLoadingId !==
-                                        null
-                                      }
-                                      onClick={() =>
-                                        handleCustomerAppointmentCancel(
-                                          appointment
-                                        )
-                                      }
-                                    >
-                                      {isAppointmentActionLoading
-                                        ? 'Cancelling...'
-                                        : 'Cancel Appointment'}
-                                    </button>
-                                  )}
-
-
-                                  {!canCancel && (
-                                    <span
-                                      style={{
-                                        color: '#6b7280',
-                                        fontSize: '12px',
-                                      }}
-                                    >
-                                      No actions available
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {customerAppointmentPagination && (
-                      <div className="pagination-controls">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCustomerAppointmentPage((page) =>
-                              Math.max(1, page - 1)
-                            )
-                          }
-                          disabled={
-                            customerAppointmentPagination.current_page <= 1 ||
-                            customerAppointmentsLoading
-                          }
-                        >
-                          Previous
-                        </button>
-                        <span>
-                          Page {customerAppointmentPagination.current_page} of{' '}
-                          {customerAppointmentPagination.last_page}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCustomerAppointmentPage((page) =>
-                              Math.min(
-                                customerAppointmentPagination.last_page,
-                                page + 1
-                              )
-                            )
-                          }
-                          disabled={
-                            customerAppointmentPagination.current_page >=
-                              customerAppointmentPagination.last_page ||
-                            customerAppointmentsLoading
-                          }
-                        >
-                          Next
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-                {appointmentListMode === 'empty' && (
-                  <p>
-                    You have no appointments yet. Book an appointment above
-                    and it will appear here.
-                  </p>
-                )}
-              </section>
-            )}
-
-            <section className="booking-banner" id="booking">
-              <p className="eyebrow">READY FOR A FRESH LOOK?</p>
-              <h2>Your Next Great Haircut Starts Here.</h2>
-              <p>Choose from our services and meet our barbers.</p>
-
-              {!user && (
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    justifyContent: 'center',
-                    gap: '12px',
-                  }}
-                >
-                  <button
-                    className="primary-button"
-                    onClick={() => openLogin('customer')}
-                  >
-                    Customer Login →
-                  </button>
-                  <button
-                    className="primary-button"
-                    onClick={() => openLogin('admin')}
-                  >
-                    Admin Login →
-                  </button>
-                </div>
-              )}
-
-              {isCustomer && (
-                <div
-                  className="login-card"
-                  style={{
-                    maxWidth: '560px',
-                    width: '100%',
-                    margin: '24px auto 0',
-                    textAlign: 'left',
-                  }}
-                >
-                  <h3>Book an Appointment</h3>
-                  <p>Choose a barber, service, date, and time.</p>
-
-                  <form onSubmit={handleBooking} noValidate>
-                    <label htmlFor="booking-barber">Choose a Barber</label>
-                    <select
-                      id="booking-barber"
-                      value={bookingBarberId}
-                      onChange={(event) =>
-                        setBookingBarberId(event.target.value)
-                      }
-                      required
-                    >
-                      <option value="">Select a barber</option>
-                      {bookingBarbers
-                        .filter((barber) => barber.is_available)
-                        .map((barber) => (
-                          <option key={barber.id} value={barber.id}>
-                            {barber.name}
-                          </option>
-                        ))}
-                    </select>
-
-                    <label htmlFor="booking-service">Choose a Service</label>
-                    <select
-                      id="booking-service"
-                      value={bookingServiceId}
-                      onChange={(event) =>
-                        setBookingServiceId(event.target.value)
-                      }
-                      required
-                    >
-                      <option value="">Select a service</option>
-                      {services.map((service) => (
-                        <option key={service.id} value={service.id}>
-                          {service.name} — ₱
-                          {Number(service.price).toFixed(2)}
-                        </option>
-                      ))}
-                    </select>
-
-                    <label htmlFor="booking-date">Appointment Date</label>
-                    <input
-                      id="booking-date"
-                      type="date"
-                      min={today}
-                      value={bookingDate}
-                      onChange={(event) => setBookingDate(event.target.value)}
-                      required
-                    />
-
-                    <label htmlFor="booking-time">Appointment Time</label>
-                    <input
-                      id="booking-time"
-                      type="time"
-                      value={bookingTime}
-                      onChange={(event) => setBookingTime(event.target.value)}
-                      required
-                    />
-
-                    <label htmlFor="booking-notes">Notes (Optional)</label>
-                    <textarea
-                      id="booking-notes"
-                      value={bookingNotes}
-                      onChange={(event) => setBookingNotes(event.target.value)}
-                      maxLength={1000}
-                      rows={3}
-                      placeholder="Any special requests?"
-                    />
-
-                    {bookingError && (
-                      <p className="error-message" role="alert">
-                        {bookingError}
-                      </p>
-                    )}
-                    {bookingMessage && (
-                      <output className="success-message" style={{ display: 'block' }}>
-                        {bookingMessage}
-                      </output>
-                    )}
-
-                    <button
-                      className="primary-button login-submit"
-                      type="submit"
-                      disabled={bookingLoading}
-                    >
-                      {bookingLoading
-                        ? 'Submitting...'
-                        : 'Confirm Appointment'}
-                    </button>
-                  </form>
-                </div>
-              )}
-            </section>
-          </>
-        )}
-
-        {error && <p className="error-message">{error}</p>}
-      </main>
-
-      <footer>
-        <a
-          className="brand"
+          className="brand sidebar-brand"
           href={isAdmin ? '#admin-dashboard' : '#home'}
           onClick={(event) =>
             scrollToSection(isAdmin ? 'admin-dashboard' : 'home', event)
@@ -2384,6 +1145,187 @@ function App() {
         >
           BARBER<span>BOOK</span>
         </a>
+
+        <p className="sidebar-label">NAVIGATION</p>
+        {isAdmin ? (
+          <nav className="sidebar-nav" aria-label="Admin navigation">
+            <a href="#admin-dashboard" onClick={(event) => scrollToSection('admin-dashboard', event)}>
+              <span className="sidebar-icon">▦</span> Dashboard
+            </a>
+            <a href="#barber-statistics" onClick={(event) => scrollToSection('barber-statistics', event)}>
+              <span className="sidebar-icon">✂</span> Barber Statistics
+            </a>
+            <a href="#recent-appointments" onClick={(event) => scrollToSection('recent-appointments', event)}>
+              <span className="sidebar-icon">▤</span> Recent Appointments
+            </a>
+          </nav>
+        ) : (
+          <nav className="sidebar-nav" aria-label="Main navigation">
+            <a href="#home" onClick={(event) => scrollToSection('home', event)}>
+              <span className="sidebar-icon">⌂</span> Home
+            </a>
+            <a href="#services" onClick={(event) => scrollToSection('services', event)}>
+              <span className="sidebar-icon">✂</span> Services
+            </a>
+            <a href="#barbers" onClick={(event) => scrollToSection('barbers', event)}>
+              <span className="sidebar-icon">♙</span> Our Barbers
+            </a>
+            {isCustomer && (
+              <>
+                <a href="#customer-notifications" onClick={(event) => scrollToSection('customer-notifications', event)}>
+                  <span className="sidebar-icon">♧</span> Notifications
+                  {customerNotifications.some((notification) => !notification.read_at) && (
+                    <span className="sidebar-count">
+                      {customerNotifications.filter((notification) => !notification.read_at).length}
+                    </span>
+                  )}
+                </a>
+                <a href="#my-appointments" onClick={(event) => scrollToSection('my-appointments', event)}>
+                  <span className="sidebar-icon">▤</span> My Appointments
+                </a>
+              </>
+            )}
+            <a href="#booking" onClick={(event) => scrollToSection('booking', event)}>
+              <span className="sidebar-icon">＋</span> Booking
+            </a>
+          </nav>
+        )}
+
+        <div className="sidebar-account">
+          {user ? (
+            <>
+              <div className="sidebar-user-avatar" aria-hidden="true">
+                {(user.name || 'U').charAt(0).toUpperCase()}
+              </div>
+              <div className="sidebar-user-details">
+                <strong>{user.name}</strong>
+                <span>{getRoleLabel(user.role)}</span>
+              </div>
+              <button className="sidebar-logout" type="button" onClick={handleLogout}>
+                <span className="sidebar-icon">↪</span> Logout
+              </button>
+            </>
+          ) : (
+            <button className="nav-button sidebar-login" type="button" onClick={() => openLogin(loginType)}>
+              {showLogin ? 'Login Open' : 'Login'}
+            </button>
+          )}
+        </div>
+      </aside>
+
+      <main>
+        {showLogin && !user && (
+          <LoginPage
+            loginType={loginType}
+            setLoginType={(type) => {
+              setLoginType(type)
+              setLoginError('')
+            }}
+            selectorButtonStyle={selectorButtonStyle}
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            handleLogin={handleLogin}
+            loginError={loginError}
+            loginLoading={loginLoading}
+            loginButtonText={loginButtonText}
+          />
+        )}
+
+        {loginMessage && (
+          <p className="success-message" role="status">
+            {loginMessage}
+          </p>
+        )}
+
+        {/* ADMIN INTERFACE */}
+        {isAdmin && (
+          <AdminDashboard
+            user={user}
+            dashboardData={dashboardData}
+            dashboardError={dashboardError}
+            dashboardLoading={dashboardLoading}
+            handleRefreshDashboard={handleRefreshDashboard}
+            summaryCards={summaryCards}
+            barberAvailabilityError={barberAvailabilityError}
+            barberAvailabilityMessage={barberAvailabilityMessage}
+            barberAvailabilityLoadingId={barberAvailabilityLoadingId}
+            appointmentActionLoadingId={appointmentActionLoadingId}
+            handleBarberAvailabilityChange={handleBarberAvailabilityChange}
+            appointmentActionError={appointmentActionError}
+            appointmentActionMessage={appointmentActionMessage}
+            handleAppointmentStatusChange={handleAppointmentStatusChange}
+            availabilityButtonStyle={availabilityButtonStyle}
+            actionButtonStyle={actionButtonStyle}
+            getRoleBadgeStyle={getRoleBadgeStyle}
+          />
+        )}
+
+        {/* CUSTOMER/PUBLIC INTERFACE */}
+        {!isAdmin && (
+          <>
+            <HomePage
+              user={user}
+              isCustomer={isCustomer}
+              openLogin={openLogin}
+              services={services}
+              servicesLoading={servicesLoading}
+              servicePagination={servicePagination}
+              setServicePage={setServicePage}
+              barbers={barbers}
+              barbersLoading={barbersLoading}
+              barberPagination={barberPagination}
+              setBarberPage={setBarberPage}
+              bookingBarbers={bookingBarbers}
+              bookingBarberId={bookingBarberId}
+              setBookingBarberId={setBookingBarberId}
+              bookingServiceId={bookingServiceId}
+              setBookingServiceId={setBookingServiceId}
+              bookingDate={bookingDate}
+              setBookingDate={setBookingDate}
+              bookingTime={bookingTime}
+              setBookingTime={setBookingTime}
+              bookingNotes={bookingNotes}
+              setBookingNotes={setBookingNotes}
+              bookingError={bookingError}
+              bookingMessage={bookingMessage}
+              bookingLoading={bookingLoading}
+              handleBooking={handleBooking}
+              today={today}
+              scrollToSection={scrollToSection}
+            />
+            <MyAppointments
+              isCustomer={isCustomer}
+              customerNotifications={customerNotifications}
+              customerNotificationsLoading={customerNotificationsLoading}
+              customerNotificationsError={customerNotificationsError}
+              customerNotificationPagination={customerNotificationPagination}
+              customerNotificationActionLoadingId={customerNotificationActionLoadingId}
+              customerNotificationActionMessage={customerNotificationActionMessage}
+              customerNotificationPage={customerNotificationPage}
+              setCustomerNotificationPage={setCustomerNotificationPage}
+              handleMarkNotificationAsRead={handleMarkNotificationAsRead}
+              customerAppointments={customerAppointments}
+              customerAppointmentsLoading={customerAppointmentsLoading}
+              customerAppointmentsError={customerAppointmentsError}
+              customerAppointmentPagination={customerAppointmentPagination}
+              customerAppointmentPage={customerAppointmentPage}
+              setCustomerAppointmentPage={setCustomerAppointmentPage}
+              customerAppointmentActionLoadingId={customerAppointmentActionLoadingId}
+              customerAppointmentActionError={customerAppointmentActionError}
+              customerAppointmentActionMessage={customerAppointmentActionMessage}
+              refreshCustomerAppointments={refreshCustomerAppointments}
+              handleCustomerAppointmentCancel={handleCustomerAppointmentCancel}
+              handleCustomerAppointmentComplete={handleCustomerAppointmentComplete}
+              hasAppointmentTimeArrived={hasAppointmentTimeArrived}
+            />
+          </>
+        )}
+        {error && <p className="error-message">{error}</p>}
+      </main>
+
+      <footer className="content-footer">
         <p>Barber Shop Booking System · Student Project</p>
       </footer>
     </div>
