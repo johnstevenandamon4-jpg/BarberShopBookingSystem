@@ -143,35 +143,52 @@ function formatStatus(status) {
     .join(' ')
 }
 
-// Check whether the appointment's scheduled local date and time have arrived.
-function hasAppointmentTimeArrived(dateValue, timeValue) {
-  if (!dateValue || !timeValue) return false
+function getAppointmentActions(appointment) {
+  if (appointment.status === 'pending') {
+    return [
+      { label: 'Confirm', status: 'confirmed' },
+      { label: 'Cancel', status: 'cancelled' },
+    ]
+  }
 
-  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateValue)
-  const timeMatch = /^(\d{1,2}):(\d{2})/.exec(timeValue)
+  if (appointment.status === 'confirmed') {
+    return [
+      { label: 'Complete', status: 'completed' },
+      { label: 'Cancel', status: 'cancelled' },
+      { label: 'Mark No-Show', status: 'no_show' },
+    ]
+  }
 
-  if (!dateMatch || !timeMatch) return false
+  return []
+}
 
-  const [, year, month, day] = dateMatch
-  const hours = Number(timeMatch[1])
-  const minutes = Number(timeMatch[2])
-
-  if (hours > 23 || minutes > 59) return false
-
-  const appointmentDateTime = new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    hours,
-    minutes,
-    0,
-    0
+async function fetchAllBookingBarbers(signal) {
+  const firstResponse = await axios.get(`${API_URL}/barbers?page=1`, {
+    ...(signal ? { signal } : {}),
+  })
+  const allBarbers = [...(firstResponse.data.data ?? [])]
+  const lastPage = Number(firstResponse.data.last_page ?? 1)
+  const pageNumbers = Array.from(
+    { length: Math.max(0, lastPage - 1) },
+    (_, index) => index + 2
+  )
+  const responses = await Promise.all(
+    pageNumbers.map((page) =>
+      axios.get(`${API_URL}/barbers?page=${page}`, {
+        ...(signal ? { signal } : {}),
+      })
+    )
   )
 
-  return appointmentDateTime.getTime() <= Date.now()
+  responses.forEach((response) => {
+    allBarbers.push(...(response.data.data ?? []))
+  })
+
+  return allBarbers
 }
 
 function App() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [barbers, setBarbers] = useState([])
 
   // All barber pages for the booking dropdown.
@@ -209,6 +226,20 @@ function App() {
   const [customerAppointmentActionError, setCustomerAppointmentActionError] =
     useState('')
   const [customerAppointmentActionMessage, setCustomerAppointmentActionMessage] =
+    useState('')
+
+  // Persistent notifications sent to the authenticated customer.
+  const [customerNotifications, setCustomerNotifications] = useState([])
+  const [customerNotificationPagination, setCustomerNotificationPagination] =
+    useState(null)
+  const [customerNotificationPage, setCustomerNotificationPage] = useState(1)
+  const [customerNotificationsLoading, setCustomerNotificationsLoading] =
+    useState(false)
+  const [customerNotificationsError, setCustomerNotificationsError] =
+    useState('')
+  const [customerNotificationActionLoadingId, setCustomerNotificationActionLoadingId] =
+    useState(null)
+  const [customerNotificationActionMessage, setCustomerNotificationActionMessage] =
     useState('')
 
   const [barberPage, setBarberPage] = useDraftState(
@@ -304,21 +335,7 @@ function App() {
 
     async function loadAllBookingBarbers() {
       try {
-        const firstResponse = await axios.get(`${API_URL}/barbers?page=1`, {
-          signal: controller.signal,
-        })
-
-        const allBarbers = [...(firstResponse.data.data ?? [])]
-        const lastPage = Number(firstResponse.data.last_page ?? 1)
-
-        for (let page = 2; page <= lastPage; page += 1) {
-          const response = await axios.get(
-            `${API_URL}/barbers?page=${page}`,
-            { signal: controller.signal }
-          )
-
-          allBarbers.push(...(response.data.data ?? []))
-        }
+        const allBarbers = await fetchAllBookingBarbers(controller.signal)
 
         if (!controller.signal.aborted) {
           setBookingBarbers(allBarbers)
@@ -384,7 +401,7 @@ function App() {
         setUser(response.data.user ?? response.data)
       } catch {
         localStorage.removeItem('barber_token')
-        delete axios.defaults.headers.common.Authorization
+                delete axios.defaults.headers.common.Authorization
       }
     }
 
@@ -480,6 +497,51 @@ function App() {
     return () => controller.abort()
   }, [user?.id, user?.role, customerAppointmentPage])
 
+  // Fetch persistent notifications for the authenticated customer.
+  useEffect(() => {
+    if (!isCustomer) {
+      setCustomerNotifications([])
+      setCustomerNotificationPagination(null)
+      setCustomerNotificationPage(1)
+      setCustomerNotificationsLoading(false)
+      setCustomerNotificationsError('')
+      setCustomerNotificationActionLoadingId(null)
+      setCustomerNotificationActionMessage('')
+      return
+    }
+
+    const controller = new AbortController()
+
+    async function loadCustomerNotifications() {
+      setCustomerNotificationsLoading(true)
+      setCustomerNotificationsError('')
+
+      try {
+        const response = await axios.get(
+          `${API_URL}/notifications?page=${customerNotificationPage}`,
+          { signal: controller.signal }
+        )
+
+        setCustomerNotifications(response.data.data ?? [])
+        setCustomerNotificationPagination(response.data)
+      } catch (err) {
+        if (!axios.isCancel(err)) {
+          setCustomerNotificationsError(
+            err.response?.data?.message ||
+              'Unable to load your notifications. Please try again.'
+          )
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setCustomerNotificationsLoading(false)
+        }
+      }
+    }
+
+    void loadCustomerNotifications()
+    return () => controller.abort()
+  }, [user?.id, user?.role, customerNotificationPage])
+
   // Clear booking messages when the logged-in account changes.
   useEffect(() => {
     setBookingError('')
@@ -504,6 +566,58 @@ function App() {
       )
     } finally {
       setCustomerAppointmentsLoading(false)
+    }
+  }
+
+  async function refreshCustomerNotifications(page = customerNotificationPage) {
+    if (!isCustomer) return
+
+    setCustomerNotificationsLoading(true)
+    setCustomerNotificationsError('')
+
+    try {
+      const response = await axios.get(`${API_URL}/notifications?page=${page}`)
+      setCustomerNotifications(response.data.data ?? [])
+      setCustomerNotificationPagination(response.data)
+    } catch (err) {
+      setCustomerNotificationsError(
+        err.response?.data?.message ||
+          'Unable to refresh your notifications. Please try again.'
+      )
+    } finally {
+      setCustomerNotificationsLoading(false)
+    }
+  }
+
+  async function handleMarkNotificationAsRead(notification) {
+    if (!isCustomer || notification.read_at) return
+
+    setCustomerNotificationActionLoadingId(notification.id)
+    setCustomerNotificationActionMessage('')
+    setCustomerNotificationsError('')
+
+    try {
+      const response = await axios.patch(
+        `${API_URL}/notifications/${notification.id}/read`
+      )
+
+      setCustomerNotifications((currentNotifications) =>
+        currentNotifications.map((item) =>
+          item.id === notification.id
+            ? { ...item, ...response.data.data, read_at: response.data.data?.read_at ?? new Date().toISOString() }
+            : item
+        )
+      )
+      setCustomerNotificationActionMessage(
+        response.data.message || 'Notification marked as read.'
+      )
+    } catch (err) {
+      setCustomerNotificationsError(
+        err.response?.data?.message ||
+          'Unable to mark this notification as read. Please try again.'
+      )
+    } finally {
+      setCustomerNotificationActionLoadingId(null)
     }
   }
 
@@ -549,58 +663,6 @@ function App() {
     }
   }
 
-  // Allow customers to mark their own eligible confirmed appointment as done.
-  async function handleCustomerAppointmentComplete(appointment) {
-    if (!isCustomer || appointment.status !== 'confirmed') {
-      setCustomerAppointmentActionError(
-        'Only your own confirmed appointments can be marked as done.'
-      )
-      return
-    }
-
-    if (
-      !hasAppointmentTimeArrived(
-        appointment.appointment_date,
-        appointment.appointment_time
-      )
-    ) {
-      setCustomerAppointmentActionError(
-        'You can mark this appointment as done only after its scheduled date and time.'
-      )
-      return
-    }
-
-    const shouldContinue = window.confirm(
-      `Have you received your haircut for the appointment with ${
-        appointment.barber?.name || 'this barber'
-      }? Confirming will mark this appointment as completed.`
-    )
-
-    if (!shouldContinue) return
-
-    setCustomerAppointmentActionLoadingId(appointment.id)
-    setCustomerAppointmentActionError('')
-    setCustomerAppointmentActionMessage('')
-
-    try {
-      const response = await axios.post(
-        `${API_URL}/appointments/${appointment.id}/complete`
-      )
-
-      setCustomerAppointmentActionMessage(
-        response.data.message || 'Appointment marked as done successfully.'
-      )
-
-      await refreshCustomerAppointments()
-    } catch (err) {
-      setCustomerAppointmentActionError(
-        err.response?.data?.message ||
-          'Unable to mark this appointment as done. Please try again.'
-      )
-    } finally {
-      setCustomerAppointmentActionLoadingId(null)
-    }
-  }
 
   function openLogin(type) {
     setLoginType(type)
@@ -652,6 +714,11 @@ function App() {
       setCustomerAppointmentPage(1)
       setCustomerAppointmentActionError('')
       setCustomerAppointmentActionMessage('')
+      setCustomerNotifications([])
+      setCustomerNotificationPagination(null)
+      setCustomerNotificationPage(1)
+      setCustomerNotificationsError('')
+      setCustomerNotificationActionMessage('')
       setAppointmentActionError('')
       setAppointmentActionMessage('')
       setBarberAvailabilityError('')
@@ -681,7 +748,6 @@ function App() {
     } finally {
       localStorage.removeItem('barber_token')
       delete axios.defaults.headers.common.Authorization
-
       setUser(null)
       setDashboardData(null)
       setDashboardError('')
@@ -691,6 +757,12 @@ function App() {
       setCustomerAppointmentsError('')
       setCustomerAppointmentActionError('')
       setCustomerAppointmentActionMessage('')
+      setCustomerNotifications([])
+      setCustomerNotificationPagination(null)
+      setCustomerNotificationPage(1)
+      setCustomerNotificationsError('')
+      setCustomerNotificationActionLoadingId(null)
+      setCustomerNotificationActionMessage('')
       setAppointmentActionError('')
       setAppointmentActionMessage('')
       setBarberAvailabilityError('')
@@ -770,21 +842,7 @@ function App() {
       setBarberPagination(barbersResponse.data)
 
       // Keep the booking dropdown's barber availability up to date.
-      const allBookingBarbersResponse = await axios.get(
-        `${API_URL}/barbers?page=1`
-      )
-      const allBookingBarbers = [
-        ...(allBookingBarbersResponse.data.data ?? []),
-      ]
-      const lastPage = Number(
-        allBookingBarbersResponse.data.last_page ?? 1
-      )
-
-      for (let page = 2; page <= lastPage; page += 1) {
-        const response = await axios.get(`${API_URL}/barbers?page=${page}`)
-        allBookingBarbers.push(...(response.data.data ?? []))
-      }
-
+      const allBookingBarbers = await fetchAllBookingBarbers()
       setBookingBarbers(allBookingBarbers)
 
       setBarberAvailabilityMessage(
@@ -883,7 +941,7 @@ function App() {
     setBookingError('')
     setBookingMessage('')
 
-    if (!user || user.role !== 'customer') {
+    if (user?.role !== 'customer') {
       setBookingError('Please log in with a customer account to book.')
       return
     }
@@ -958,6 +1016,20 @@ function App() {
     return `${year}-${month}-${day}`
   })()
 
+  let notificationListMode = 'empty'
+  if (customerNotificationsLoading && customerNotifications.length === 0) {
+    notificationListMode = 'loading'
+  } else if (customerNotifications.length > 0) {
+    notificationListMode = 'items'
+  }
+
+  let appointmentListMode = 'empty'
+  if (customerAppointmentsLoading && customerAppointments.length === 0) {
+    appointmentListMode = 'loading'
+  } else if (customerAppointments.length > 0) {
+    appointmentListMode = 'items'
+  }
+
   const summaryCards = [
     ['Total Bookings', dashboardData?.summary?.total_bookings],
     ['Pending', dashboardData?.summary?.pending_bookings],
@@ -966,25 +1038,6 @@ function App() {
     ['Cancelled', dashboardData?.summary?.cancelled_bookings],
     ['No-Shows', dashboardData?.summary?.no_show_bookings],
   ]
-
-  function getAppointmentActions(appointment) {
-    if (appointment.status === 'pending') {
-      return [
-        { label: 'Confirm', status: 'confirmed' },
-        { label: 'Cancel', status: 'cancelled' },
-      ]
-    }
-
-    if (appointment.status === 'confirmed') {
-      return [
-        { label: 'Complete', status: 'completed' },
-        { label: 'Cancel', status: 'cancelled' },
-        { label: 'Mark No-Show', status: 'no_show' },
-      ]
-    }
-
-    return []
-  }
 
   const actionButtonStyle = {
     padding: '7px 10px',
@@ -1009,90 +1062,246 @@ function App() {
 
   return (
     <div className="app">
+      <style>{`
+        .app main section[id] { scroll-margin-top: 100px; }
+        .app .navbar {
+          position: sticky;
+          top: 0;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          padding: 14px clamp(18px, 4vw, 56px);
+          background: rgba(23, 23, 23, 0.97);
+          color: #f8f5f0;
+          border-bottom: 1px solid rgba(214, 165, 108, 0.28);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+          backdrop-filter: blur(12px);
+        }
+        .app .navbar .brand {
+          display: inline-flex;
+          align-items: center;
+          flex-shrink: 0;
+          gap: 0;
+          color: #fff;
+          text-decoration: none;
+          font-size: 1.3rem;
+          font-weight: 900;
+          letter-spacing: 1.5px;
+          white-space: nowrap;
+        }
+        .app .navbar .brand::before {
+          content: '✂';
+          display: inline-grid;
+          place-items: center;
+          width: 38px;
+          height: 38px;
+          margin-right: 10px;
+          border-radius: 10px;
+          background: #d6a56c;
+          color: #171717;
+          font-size: 21px;
+          letter-spacing: 0;
+        }
+        .app .navbar .brand span { color: #d6a56c; }
+        .app .navbar .navbar-links {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          margin: 0 auto;
+        }
+        .app .navbar .navbar-links a {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+          padding: 10px 11px;
+          border-radius: 8px;
+          color: #e7e2dc;
+          text-decoration: none;
+          font-size: 0.9rem;
+          font-weight: 600;
+          white-space: nowrap;
+          transition: color 160ms ease, background 160ms ease;
+        }
+        .app .navbar .navbar-links a:hover,
+        .app .navbar .navbar-links a:focus-visible {
+          color: #f2c58e;
+          background: rgba(214, 165, 108, 0.12);
+          outline: none;
+        }
+        .app .navbar .notification-count {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 19px;
+          height: 19px;
+          padding: 0 5px;
+          border-radius: 999px;
+          background: #c43d35;
+          color: #fff;
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1;
+        }
+        .app .navbar .navbar-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 9px;
+          flex-shrink: 0;
+        }
+        .app .navbar .navbar-greeting {
+          color: #f0e8df;
+          font-size: 0.88rem;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+        .app .navbar .nav-button {
+          border: 1px solid #d6a56c;
+          border-radius: 9px;
+          padding: 10px 16px;
+          background: #d6a56c;
+          color: #171717;
+          font-size: 0.88rem;
+          font-weight: 800;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: transform 160ms ease, background 160ms ease;
+        }
+        .app .navbar .nav-button:hover {
+          background: #e6b982;
+          transform: translateY(-1px);
+        }
+        .app .navbar .nav-button:focus-visible,
+        .app .navbar .menu-toggle:focus-visible {
+          outline: 2px solid #f2c58e;
+          outline-offset: 3px;
+        }
+        .app .navbar .menu-toggle {
+          display: none;
+          align-items: center;
+          justify-content: center;
+          width: 42px;
+          height: 42px;
+          border: 1px solid rgba(214, 165, 108, 0.55);
+          border-radius: 9px;
+          background: transparent;
+          color: #f8f5f0;
+          font-size: 23px;
+          cursor: pointer;
+        }
+        @media (max-width: 1080px) {
+          .app .navbar { gap: 14px; }
+          .app .navbar .navbar-links { gap: 0; }
+          .app .navbar .navbar-links a { padding: 9px 8px; font-size: 0.84rem; }
+          .app .navbar .navbar-greeting { display: none; }
+        }
+        @media (max-width: 820px) {
+          .app .navbar { flex-wrap: wrap; gap: 12px; padding: 12px 18px; }
+          .app .navbar .brand { font-size: 1.12rem; }
+          .app .navbar .brand::before { width: 34px; height: 34px; margin-right: 8px; }
+          .app .navbar .menu-toggle { display: inline-flex; margin-left: auto; }
+          .app .navbar .navbar-links {
+            display: none;
+            order: 3;
+            flex: 0 0 100%;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 4px;
+            width: 100%;
+            margin: 0;
+            padding: 8px 0 2px;
+            border-top: 1px solid rgba(214, 165, 108, 0.2);
+          }
+          .app .navbar .navbar-links.is-open { display: flex; }
+          .app .navbar .navbar-links a {
+            justify-content: flex-start;
+            width: 100%;
+            padding: 12px 13px;
+            font-size: 0.95rem;
+          }
+          .app .navbar .navbar-actions {
+            display: none;
+            order: 4;
+            flex: 0 0 100%;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+            padding: 10px 0 3px;
+            border-top: 1px solid rgba(214, 165, 108, 0.2);
+          }
+          .app .navbar .navbar-actions.is-open { display: flex; }
+          .app .navbar .navbar-greeting { display: inline; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .app .navbar * { transition: none !important; }
+        }
+      `}</style>
       <header className="navbar">
         <a
           className="brand"
           href={isAdmin ? '#admin-dashboard' : '#home'}
-          onClick={(event) =>
+          onClick={(event) => {
             scrollToSection(isAdmin ? 'admin-dashboard' : 'home', event)
-          }
+            setMobileMenuOpen(false)
+          }}
+          aria-label="BarberBook home"
         >
           BARBER<span>BOOK</span>
         </a>
 
         {isAdmin ? (
-          <nav>
-            <a
-              href="#admin-dashboard"
-              onClick={(event) => scrollToSection('admin-dashboard', event)}
-            >
-              Dashboard
-            </a>
-            <a
-              href="#barber-statistics"
-              onClick={(event) => scrollToSection('barber-statistics', event)}
-            >
-              Barber Statistics
-            </a>
-            <a
-              href="#recent-appointments"
-              onClick={(event) =>
-                scrollToSection('recent-appointments', event)
-              }
-            >
-              Recent Appointments
-            </a>
+          <nav className={`navbar-links ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="Administrator navigation">
+            <a href="#admin-dashboard" onClick={(event) => { scrollToSection('admin-dashboard', event); setMobileMenuOpen(false) }}>Dashboard</a>
+            <a href="#barber-statistics" onClick={(event) => { scrollToSection('barber-statistics', event); setMobileMenuOpen(false) }}>Barber Statistics</a>
+            <a href="#recent-appointments" onClick={(event) => { scrollToSection('recent-appointments', event); setMobileMenuOpen(false) }}>Recent Appointments</a>
           </nav>
         ) : (
-          <nav>
-            <a
-              href="#services"
-              onClick={(event) => scrollToSection('services', event)}
-            >
-              Services
-            </a>
-            <a
-              href="#barbers"
-              onClick={(event) => scrollToSection('barbers', event)}
-            >
-              Our Barbers
-            </a>
+          <nav className={`navbar-links ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="Main navigation">
+            {!isCustomer && <a href="#home" onClick={(event) => { scrollToSection('home', event); setMobileMenuOpen(false) }}>Home</a>}
+            <a href="#services" onClick={(event) => { scrollToSection('services', event); setMobileMenuOpen(false) }}>Services</a>
+            <a href="#barbers" onClick={(event) => { scrollToSection('barbers', event); setMobileMenuOpen(false) }}>Our Barbers</a>
             {isCustomer && (
-              <a
-                href="#my-appointments"
-                onClick={(event) =>
-                  scrollToSection('my-appointments', event)
-                }
-              >
-                My Appointments
-              </a>
+              <>
+                <a href="#customer-notifications" onClick={(event) => { scrollToSection('customer-notifications', event); setMobileMenuOpen(false) }}>
+                  Notifications
+                  {customerNotifications.some((notification) => !notification.read_at) && (
+                    <span className="notification-count" aria-label={`${customerNotifications.filter((notification) => !notification.read_at).length} unread notifications`}>
+                      {customerNotifications.filter((notification) => !notification.read_at).length}
+                    </span>
+                  )}
+                </a>
+                <a href="#my-appointments" onClick={(event) => { scrollToSection('my-appointments', event); setMobileMenuOpen(false) }}>My Appointments</a>
+              </>
             )}
-            <a
-              href="#booking"
-              onClick={(event) => scrollToSection('booking', event)}
-            >
-              Booking
-            </a>
+            <a className="book-nav-link" href="#booking" onClick={(event) => { scrollToSection('booking', event); setMobileMenuOpen(false) }}>Booking</a>
           </nav>
         )}
 
+        <button
+          type="button"
+          className="menu-toggle"
+          aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen((open) => !open)}
+        >
+          {mobileMenuOpen ? '×' : '☰'}
+        </button>
+
         {user ? (
-          <div className="account-actions">
-            <span>Hi, {user.name}</span>
-            <span style={getRoleBadgeStyle(user.role)}>
-              {getRoleLabel(user.role)}
-            </span>
-            <button className="nav-button" onClick={handleLogout}>
-              Logout
-            </button>
+          <div className={`navbar-actions account-actions ${mobileMenuOpen ? 'is-open' : ''}`}>
+            <span className="navbar-greeting">Hi, {user.name}</span>
+            <span style={getRoleBadgeStyle(user.role)}>{getRoleLabel(user.role)}</span>
+            <button className="nav-button" onClick={handleLogout}>Logout</button>
           </div>
         ) : (
-          <button
-            className="nav-button"
-            onClick={() => openLogin(loginType)}
-          >
-            {showLogin ? 'Login Open' : 'Login'}
-          </button>
+          <div className={`navbar-actions ${mobileMenuOpen ? 'is-open' : ''}`}>
+            <button className="nav-button" onClick={() => { openLogin(loginType); setMobileMenuOpen(false) }}>
+              {showLogin ? 'Login Open' : 'Login'}
+            </button>
+          </div>
         )}
       </header>
 
@@ -1190,9 +1399,9 @@ function App() {
         )}
 
         {loginMessage && (
-          <p className="success-message" role="status">
+          <output className="success-message" style={{ display: 'block' }}>
             {loginMessage}
-          </p>
+          </output>
         )}
 
         {/* ADMIN INTERFACE */}
@@ -1271,9 +1480,9 @@ function App() {
                   )}
 
                   {barberAvailabilityMessage && (
-                    <p className="success-message" role="status">
+                    <output className="success-message" style={{ display: 'block' }}>
                       {barberAvailabilityMessage}
-                    </p>
+                    </output>
                   )}
 
                   {dashboardData.bookings_by_barber?.length ? (
@@ -1292,6 +1501,12 @@ function App() {
                             const isAvailable = Boolean(barber.is_available)
                             const isUpdating =
                               barberAvailabilityLoadingId === barber.id
+                            let availabilityActionLabel = isAvailable
+                              ? 'Mark Unavailable'
+                              : 'Mark Available'
+                            if (isUpdating) {
+                              availabilityActionLabel = 'Updating...'
+                            }
 
                             return (
                               <tr key={barber.id}>
@@ -1323,11 +1538,7 @@ function App() {
                                       handleBarberAvailabilityChange(barber)
                                     }
                                   >
-                                    {isUpdating
-                                      ? 'Updating...'
-                                      : isAvailable
-                                        ? 'Mark Unavailable'
-                                        : 'Mark Available'}
+                                    {availabilityActionLabel}
                                   </button>
                                 </td>
                               </tr>
@@ -1359,9 +1570,9 @@ function App() {
                   )}
 
                   {appointmentActionMessage && (
-                    <p className="success-message" role="status">
+                    <output className="success-message" style={{ display: 'block' }}>
                       {appointmentActionMessage}
-                    </p>
+                    </output>
                   )}
 
                   {dashboardData.recent_appointments?.length ? (
@@ -1449,7 +1660,7 @@ function App() {
                                         style={{
                                           color: '#6b7280',
                                           fontSize: '12px',
-                                        }}
+                                                                                  }}
                                       >
                                         No actions available
                                       </span>
@@ -1664,6 +1875,143 @@ function App() {
               )}
             </section>
 
+            {/* Customer-only persistent notifications. */}
+            {isCustomer && (
+              <section
+                className="section admin-table-section"
+                id="customer-notifications"
+              >
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">ACCOUNT UPDATES</p>
+                    <h2>Notifications</h2>
+                    <p>
+                      Important updates about your appointments appear here and remain available after you log out.
+                    </p>
+                  </div>
+                  <button
+                    className="nav-button"
+                    type="button"
+                    onClick={() => refreshCustomerNotifications()}
+                    disabled={customerNotificationsLoading}
+                  >
+                    {customerNotificationsLoading ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </div>
+
+                {customerNotificationsError && (
+                  <p className="error-message" role="alert">
+                    {customerNotificationsError}
+                  </p>
+                )}
+
+                {customerNotificationActionMessage && (
+                  <output className="success-message" style={{ display: 'block' }}>
+                    {customerNotificationActionMessage}
+                  </output>
+                )}
+
+                {notificationListMode === 'loading' && (
+                  <p>Loading your notifications...</p>
+                )}
+                {notificationListMode === 'items' && (
+                  <>
+                    <div style={{ display: 'grid', gap: '14px' }}>
+                      {customerNotifications.map((notification) => {
+                        const appointment = notification.appointment
+                        const isMarkingRead = customerNotificationActionLoadingId === notification.id
+
+                        return (
+                          <article
+                            key={notification.id}
+                            style={{
+                              padding: '18px',
+                              border: notification.read_at ? '1px solid #e5e7eb' : '1px solid #f59e0b',
+                              borderLeft: notification.read_at ? '4px solid #9ca3af' : '4px solid #d97706',
+                              borderRadius: '8px',
+                              backgroundColor: notification.read_at ? '#ffffff' : '#fffbeb',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+                              <div>
+                                <h3 style={{ margin: '0 0 8px' }}>{notification.title}</h3>
+                                <p style={{ margin: '0 0 10px', lineHeight: 1.6 }}>{notification.message}</p>
+                                {appointment && (
+                                  <p style={{ margin: '0', color: '#4b5563', fontSize: '13px' }}>
+                                    Appointment: {appointment.service?.name || 'Service'} with {appointment.barber?.name || 'barber'} on {formatAppointmentDate(appointment.appointment_date)} at {formatAppointmentTime(appointment.appointment_time)}. Current status: {formatStatus(appointment.status)}.
+                                  </p>
+                                )}
+                              </div>
+                              <span
+                                style={{
+                                  flexShrink: 0,
+                                  padding: '4px 8px',
+                                  borderRadius: '999px',
+                                  backgroundColor: notification.read_at ? '#e5e7eb' : '#fef3c7',
+                                  color: notification.read_at ? '#374151' : '#92400e',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {notification.read_at ? 'Read' : 'Unread'}
+                              </span>
+                            </div>
+                            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                              <span style={{ color: '#6b7280', fontSize: '12px' }}>
+                                {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH') : ''}
+                              </span>
+                              {!notification.read_at && (
+                                <button
+                                  type="button"
+                                  style={{
+                                    padding: '8px 12px',
+                                    border: '1px solid #d1d5db',
+                                    borderRadius: '6px',
+                                    backgroundColor: '#ffffff',
+                                    color: '#1f2937',
+                                    cursor: 'pointer',
+                                  }}
+                                  disabled={customerNotificationActionLoadingId !== null}
+                                  onClick={() => handleMarkNotificationAsRead(notification)}
+                                >
+                                  {isMarkingRead ? 'Marking...' : 'Mark as Read'}
+                                </button>
+                              )}
+                            </div>
+                          </article>
+                        )
+                      })}
+                    </div>
+
+                    {customerNotificationPagination && (
+                      <div className="pagination-controls">
+                        <button
+                          type="button"
+                          onClick={() => setCustomerNotificationPage((page) => Math.max(1, page - 1))}
+                          disabled={customerNotificationPagination.current_page <= 1 || customerNotificationsLoading}
+                        >
+                          Previous
+                        </button>
+                        <span>
+                          Page {customerNotificationPagination.current_page} of {customerNotificationPagination.last_page}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setCustomerNotificationPage((page) => Math.min(customerNotificationPagination.last_page, page + 1))}
+                          disabled={customerNotificationPagination.current_page >= customerNotificationPagination.last_page || customerNotificationsLoading}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+                {notificationListMode === 'empty' && (
+                  <p>You have no notifications right now. If an administrator marks one of your confirmed appointments as No Show, the notice will appear here.</p>
+                )}
+              </section>
+            )}
+
             {/* Customer-only appointment history. */}
             {isCustomer && (
               <section
@@ -1702,17 +2050,17 @@ function App() {
                 )}
 
                 {customerAppointmentActionMessage && (
-                  <p className="success-message" role="status">
+                  <output className="success-message" style={{ display: 'block' }}>
                     {customerAppointmentActionMessage}
-                  </p>
+                  </output>
                 )}
 
-                {customerAppointmentsLoading &&
-                customerAppointments.length === 0 ? (
+                {appointmentListMode === 'loading' && (
                   <p>Loading your appointments...</p>
-                ) : customerAppointments.length > 0 ? (
+                )}
+                {appointmentListMode === 'items' && (
                   <>
-                    <div className="admin-table-wrapper">
+                                      <div className="admin-table-wrapper">
                       <table className="admin-table">
                         <thead>
                           <tr>
@@ -1729,14 +2077,7 @@ function App() {
                           {customerAppointments.map((appointment) => {
                             const canCancel = appointment.status === 'pending'
 
-                            const canMarkDone =
-                              appointment.status === 'confirmed' &&
-                              hasAppointmentTimeArrived(
-                                appointment.appointment_date,
-                                appointment.appointment_time
-                              )
-
-                            const isCancelling =
+                            const isAppointmentActionLoading =
                               customerAppointmentActionLoadingId ===
                               appointment.id
 
@@ -1818,38 +2159,14 @@ function App() {
                                         )
                                       }
                                     >
-                                      {isCancelling
+                                      {isAppointmentActionLoading
                                         ? 'Cancelling...'
                                         : 'Cancel Appointment'}
                                     </button>
                                   )}
 
-                                  {canMarkDone && (
-                                    <button
-                                      type="button"
-                                      style={{
-                                        ...actionButtonStyle,
-                                        backgroundColor: '#ecfdf5',
-                                        borderColor: '#86efac',
-                                        color: '#166534',
-                                      }}
-                                      disabled={
-                                        customerAppointmentActionLoadingId !==
-                                        null
-                                      }
-                                      onClick={() =>
-                                        handleCustomerAppointmentComplete(
-                                          appointment
-                                        )
-                                      }
-                                    >
-                                      {isCancelling
-                                        ? 'Completing...'
-                                        : 'Mark as Done'}
-                                    </button>
-                                  )}
 
-                                  {!canCancel && !canMarkDone && (
+                                  {!canCancel && (
                                     <span
                                       style={{
                                         color: '#6b7280',
@@ -1908,13 +2225,12 @@ function App() {
                       </div>
                     )}
                   </>
-                ) : (
-                  !customerAppointmentsLoading && (
-                    <p>
-                      You have no appointments yet. Book an appointment above
-                      and it will appear here.
-                    </p>
-                  )
+                )}
+                {appointmentListMode === 'empty' && (
+                  <p>
+                    You have no appointments yet. Book an appointment above
+                    and it will appear here.
+                  </p>
                 )}
               </section>
             )}
@@ -2034,9 +2350,9 @@ function App() {
                       </p>
                     )}
                     {bookingMessage && (
-                      <p className="success-message" role="status">
+                      <output className="success-message" style={{ display: 'block' }}>
                         {bookingMessage}
-                      </p>
+                      </output>
                     )}
 
                     <button

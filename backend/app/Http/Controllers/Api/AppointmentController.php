@@ -7,6 +7,7 @@ use App\Http\Requests\StoreAppointmentRequest;
 use App\Http\Requests\UpdateAppointmentRequest;
 use App\Models\Appointment;
 use App\Models\Barber;
+use App\Models\CustomerNotification;
 use App\Models\Service;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -272,7 +273,27 @@ class AppointmentController extends Controller
             }
         }
 
-        $appointment->update($validated);
+        DB::transaction(function () use ($appointment, $validated) {
+            $previousStatus = $appointment->status;
+            $newStatus = $validated['status'] ?? $previousStatus;
+
+            $appointment->update($validated);
+
+            if ($previousStatus === 'confirmed' && $newStatus === 'no_show') {
+                CustomerNotification::create([
+                    'user_id' => $appointment->user_id,
+                    'appointment_id' => $appointment->id,
+                    'title' => 'Appointment Marked as No-Show',
+                    'message' => 'Your appointment scheduled for '
+                        . $appointment->appointment_date->format('F j, Y')
+                        . ' at '
+                        . Carbon::parse(
+                            (string) $appointment->appointment_time
+                        )->format('g:i A')
+                        . ' has been marked as No Show because you did not arrive at your scheduled appointment time. If you believe this status was assigned by mistake, please contact the barber shop.',
+                ]);
+            }
+        });
 
         return response()->json([
             'message' => 'Appointment updated successfully.',

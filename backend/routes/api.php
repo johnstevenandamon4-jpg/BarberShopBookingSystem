@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\BarberController;
 use App\Http\Controllers\Api\ServiceController;
 use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\CustomerNotificationController;
 
 // Public authentication routes
 Route::post('/register', [AuthController::class, 'register']);
@@ -24,6 +25,17 @@ Route::middleware('auth:sanctum')->group(function () {
     // Authentication
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
+
+    // Customer notifications
+    Route::get('/notifications', [
+        CustomerNotificationController::class,
+        'index',
+    ]);
+
+    Route::patch('/notifications/{customerNotification}/read', [
+        CustomerNotificationController::class,
+        'markAsRead',
+    ]);
 
     // Appointment management
     Route::post(
