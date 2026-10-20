@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 function formatAppointmentDate(dateValue) {
   if (!dateValue) return '—'
 
@@ -91,6 +93,8 @@ function AdminDashboard({
   actionButtonStyle,
   getRoleBadgeStyle,
 }) {
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState(null)
+
   return (
     <>
       <section className="admin-welcome">
@@ -340,6 +344,18 @@ function AdminDashboard({
                               >
                                 No actions available
                               </span>
+                            )}
+
+                            <button type="button" style={actionButtonStyle}
+                              aria-expanded={selectedAppointmentId === appointment.id}
+                              onClick={() => setSelectedAppointmentId((current) => current === appointment.id ? null : appointment.id)}>
+                              {selectedAppointmentId === appointment.id ? 'Hide Details' : 'View Details'}
+                            </button>
+                            {selectedAppointmentId === appointment.id && (
+                              <div style={{ marginTop: '8px', padding: '10px', minWidth: '180px', maxWidth: '300px', whiteSpace: 'normal', overflowWrap: 'anywhere', border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#f9fafb', lineHeight: 1.5 }}>
+                                <strong>Additional Notes</strong>
+                                <p style={{ margin: '5px 0 0' }}>{typeof appointment.notes === 'string' && appointment.notes.trim() ? appointment.notes : 'No additional notes.'}</p>
+                              </div>
                             )}
                           </td>
                         </tr>

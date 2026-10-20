@@ -3,6 +3,7 @@ function HomePage({
   isCustomer,
   openLogin,
   services,
+  bookingServices,
   servicesLoading,
   servicePagination,
   setServicePage,
@@ -32,6 +33,9 @@ function HomePage({
   const isAdmin = user?.role === "admin";
 
   const serviceList = Array.isArray(services) ? services : [];
+  const bookingServiceList = Array.isArray(bookingServices)
+    ? bookingServices
+    : serviceList;
   const barberList = Array.isArray(barbers) ? barbers : [];
   const availableBookingBarbers = Array.isArray(bookingBarbers)
     ? bookingBarbers
@@ -819,7 +823,7 @@ function HomePage({
                 >
                   <option value="">Choose a service</option>
 
-                  {serviceList.map((service) => (
+                  {bookingServiceList.map((service) => (
                     <option
                       key={service.id}
                       value={service.id}
@@ -829,7 +833,7 @@ function HomePage({
                   ))}
                 </select>
 
-                {serviceList.length === 0 && !servicesLoading && (
+                {bookingServiceList.length === 0 && !servicesLoading && (
                   <small className="form-help">
                     No services are currently available.
                   </small>

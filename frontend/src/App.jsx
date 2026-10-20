@@ -182,6 +182,7 @@ function App() {
   const [bookingBarbers, setBookingBarbers] = useState([])
 
   const [services, setServices] = useState([])
+  const [bookingServices, setBookingServices] = useState([])
   const [dashboardData, setDashboardData] = useState(null)
   const [dashboardError, setDashboardError] = useState('')
   const [dashboardLoading, setDashboardLoading] = useState(false)
@@ -387,6 +388,44 @@ function App() {
     void loadServices()
     return () => controller.abort()
   }, [servicePage])
+
+  // Load every service page for the booking dropdown without changing
+  // pagination in the public Services section.
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadAllBookingServices() {
+      try {
+        const firstResponse = await axios.get(`${API_URL}/services?page=1`, {
+          signal: controller.signal,
+        })
+
+        const allServices = [...(firstResponse.data.data ?? [])]
+        const lastPage = Number(firstResponse.data.last_page ?? 1)
+
+        for (let page = 2; page <= lastPage; page += 1) {
+          const response = await axios.get(
+            `${API_URL}/services?page=${page}`,
+            { signal: controller.signal }
+          )
+
+          allServices.push(...(response.data.data ?? []))
+        }
+
+        if (!controller.signal.aborted) {
+          setBookingServices(allServices)
+        }
+      } catch (err) {
+        if (!axios.isCancel(err) && !controller.signal.aborted) {
+          console.error('Unable to load all booking services:', err)
+        }
+      }
+    }
+
+    void loadAllBookingServices()
+
+    return () => controller.abort()
+  }, [])
 
   // Restore an existing login session.
   useEffect(() => {
@@ -1270,6 +1309,7 @@ function App() {
               isCustomer={isCustomer}
               openLogin={openLogin}
               services={services}
+              bookingServices={bookingServices}
               servicesLoading={servicesLoading}
               servicePagination={servicePagination}
               setServicePage={setServicePage}
