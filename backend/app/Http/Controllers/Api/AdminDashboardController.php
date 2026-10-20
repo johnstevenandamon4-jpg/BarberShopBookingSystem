@@ -40,6 +40,7 @@ class AdminDashboardController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'is_available']);
 
+        // Return all appointments so React can paginate the full list.
         $recentAppointments = Appointment::query()
             ->with([
                 'customer:id,name,email',
@@ -47,7 +48,6 @@ class AdminDashboardController extends Controller
                 'service:id,name,price',
             ])
             ->latest()
-            ->take(10)
             ->get();
 
         return response()->json([

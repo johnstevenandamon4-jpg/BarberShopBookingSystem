@@ -94,6 +94,14 @@ function AdminDashboard({
   getRoleBadgeStyle,
 }) {
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(null)
+  const [appointmentPage, setAppointmentPage] = useState(1)
+  const appointmentsPerPage = 10
+  const appointments = dashboardData?.recent_appointments ?? []
+  const appointmentPageCount = Math.max(1, Math.ceil(appointments.length / appointmentsPerPage))
+  const visibleAppointments = appointments.slice(
+    (appointmentPage - 1) * appointmentsPerPage,
+    appointmentPage * appointmentsPerPage
+  )
 
   return (
     <>
@@ -269,8 +277,9 @@ function AdminDashboard({
               </output>
             )}
 
-            {dashboardData.recent_appointments?.length ? (
-              <div className="admin-table-wrapper">
+            {appointments.length ? (
+              <>
+                <div className="admin-table-wrapper">
                 <table className="admin-table">
                   <thead>
                     <tr>
@@ -285,7 +294,7 @@ function AdminDashboard({
                     </tr>
                   </thead>
                   <tbody>
-                    {dashboardData.recent_appointments.map((appointment) => {
+                    {visibleAppointments.map((appointment) => {
                       const actions = getAppointmentActions(appointment)
                       const updating =
                         appointmentActionLoadingId === appointment.id
@@ -363,7 +372,29 @@ function AdminDashboard({
                     })}
                   </tbody>
                 </table>
-              </div>
+                </div>
+                {appointmentPageCount > 1 && (
+                <div className="pagination-controls" aria-label="Appointment pagination" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '16px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="nav-button"
+                    disabled={appointmentPage === 1}
+                    onClick={() => setAppointmentPage((page) => Math.max(1, page - 1))}
+                  >
+                    Previous
+                  </button>
+                  <span aria-live="polite">Page {appointmentPage} of {appointmentPageCount} · {appointments.length} records</span>
+                  <button
+                    type="button"
+                    className="nav-button"
+                    disabled={appointmentPage >= appointmentPageCount}
+                    onClick={() => setAppointmentPage((page) => Math.min(appointmentPageCount, page + 1))}
+                  >
+                    Next
+                  </button>
+                </div>
+                )}
+              </>
             ) : (
               <p>No appointments have been recorded yet.</p>
             )}

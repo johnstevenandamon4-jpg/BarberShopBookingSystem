@@ -315,13 +315,6 @@ function MyAppointments({
                 <tbody>
                   {customerAppointments.map((appointment) => {
                     const canCancel = appointment.status === 'pending'
-                    const canMarkDone =
-                      appointment.status === 'confirmed' &&
-                      hasAppointmentTimeArrived(
-                        appointment.appointment_date,
-                        appointment.appointment_time
-                      )
-
                     const updating =
                       customerAppointmentActionLoadingId === appointment.id
 
@@ -392,27 +385,7 @@ function MyAppointments({
                             </button>
                           )}
 
-                          {canMarkDone && (
-                            <button
-                              type="button"
-                              style={{
-                                ...actionButtonStyle,
-                                backgroundColor: '#ecfdf5',
-                                borderColor: '#86efac',
-                                color: '#166534',
-                              }}
-                              disabled={
-                                customerAppointmentActionLoadingId !== null
-                              }
-                              onClick={() =>
-                                handleCustomerAppointmentComplete(appointment)
-                              }
-                            >
-                              {updating ? 'Completing...' : 'Mark as Done'}
-                            </button>
-                          )}
-
-                          {!canCancel && !canMarkDone && (
+                          {!canCancel && (
                             <span
                               style={{
                                 color: '#6b7280',

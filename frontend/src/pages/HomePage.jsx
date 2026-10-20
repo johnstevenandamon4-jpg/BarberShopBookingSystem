@@ -241,16 +241,6 @@ function HomePage({
             >
               Explore Services
             </button>
-
-            {!isLoggedIn && typeof openLogin === "function" && (
-              <button
-                type="button"
-                className="hero-login-button"
-                onClick={() => openLogin("customer")}
-              >
-                Customer Login
-              </button>
-            )}
           </div>
 
           <div className="hero-trust">

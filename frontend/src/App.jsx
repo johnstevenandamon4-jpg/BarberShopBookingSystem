@@ -1246,7 +1246,7 @@ function App() {
             </>
           ) : (
             <button className="nav-button sidebar-login" type="button" onClick={() => openLogin(loginType)}>
-              {showLogin ? 'Login Open' : 'Login'}
+              {showLogin ? 'Login As...' : 'Login'}
             </button>
           )}
         </div>
