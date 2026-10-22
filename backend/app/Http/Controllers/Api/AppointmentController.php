@@ -22,6 +22,8 @@ class AppointmentController extends Controller
             return response()->json(['message' => 'Access denied.'], 403);
         }
 
+        $search = trim((string) $request->query('search', ''));
+
         $appointments = Appointment::query()
             ->with([
                 'customer:id,name,email',
@@ -32,8 +34,25 @@ class AppointmentController extends Controller
                 $request->user()->role === 'customer',
                 fn ($query) => $query->where('user_id', $request->user()->id)
             )
+            // Filter: ?status=pending|confirmed|completed|cancelled|no_show
+            ->when(
+                $request->filled('status'),
+                fn ($query) => $query->where('status', $request->query('status'))
+            )
+            // Search: customer name/email, barber name or service name
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($query) use ($search) {
+                    $query->whereHas('customer', function ($customer) use ($search) {
+                        $customer->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%");
+                    })
+                        ->orWhereHas('barber', fn ($barber) => $barber->where('name', 'like', "%{$search}%"))
+                        ->orWhereHas('service', fn ($service) => $service->where('name', 'like', "%{$search}%"));
+                });
+            })
             ->latest()
-            ->paginate(10);
+            ->paginate(10)
+            ->withQueryString();
 
         return response()->json($appointments);
     }

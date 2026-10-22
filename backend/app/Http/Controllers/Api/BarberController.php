@@ -3,33 +3,44 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreBarberRequest;
+use App\Http\Requests\UpdateBarberRequest;
 use App\Models\Barber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 class BarberController extends Controller
 {
-    public function index(): JsonResponse
+    /**
+     * GET /api/barbers?search=&available=1|0&page=
+     */
+    public function index(Request $request): JsonResponse
     {
+        $search = trim((string) $request->query('search', ''));
+
         $barbers = Barber::query()
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($query) use ($search) {
+                    $query->where('name', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%");
+                });
+            })
+            ->when(
+                $request->filled('available'),
+                fn ($query) => $query->where('is_available', $request->boolean('available'))
+            )
             ->latest()
-            ->paginate(3);
+            ->paginate(3)
+            ->withQueryString();
 
         return response()->json($barbers);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreBarberRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'phone' => ['nullable', 'string', 'max:255'],
-            'email' => ['nullable', 'email', 'max:255', 'unique:barbers,email'],
-            'description' => ['nullable', 'string'],
-            'is_available' => ['sometimes', 'boolean'],
-        ]);
-
-        $barber = Barber::create($validated);
+        $barber = Barber::create($request->validated());
 
         return response()->json([
             'message' => 'Barber created successfully.',
@@ -44,22 +55,9 @@ class BarberController extends Controller
         ]);
     }
 
-    public function update(Request $request, Barber $barber): JsonResponse
+    public function update(UpdateBarberRequest $request, Barber $barber): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => ['sometimes', 'required', 'string', 'max:255'],
-            'phone' => ['nullable', 'string', 'max:255'],
-            'email' => [
-                'nullable',
-                'email',
-                'max:255',
-                Rule::unique('barbers', 'email')->ignore($barber->id),
-            ],
-            'description' => ['nullable', 'string'],
-            'is_available' => ['sometimes', 'boolean'],
-        ]);
-
-        $barber->update($validated);
+        $barber->update($request->validated());
 
         return response()->json([
             'message' => 'Barber updated successfully.',

@@ -1,474 +1,223 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
+import Alert from '../components/Alert'
+import AppointmentDetails from '../components/AppointmentDetails'
+import AppointmentForm from '../components/AppointmentForm'
+import Button from '../components/Button'
+import ConfirmDialog from '../components/ConfirmDialog'
+import DataTable from '../components/DataTable'
+import Modal from '../components/Modal'
+import Pagination from '../components/Pagination'
+import SearchToolbar from '../components/SearchToolbar'
+import StatusBadge from '../components/StatusBadge'
+import useCatalog from '../hooks/useCatalog'
+import useFlash from '../hooks/useFlash'
+import useListControls from '../hooks/useListControls'
+import usePagedData from '../hooks/usePagedData'
+import { getErrorMessage } from '../services/api'
+import { appointmentApi } from '../services/appointmentApi'
+import { matchesSearch } from '../utils/filters'
+import { formatDate, formatPrice, formatTime, hasAppointmentTimeArrived, toDateInput, toTimeInput } from '../utils/format'
 
-function MyAppointments({
-  isCustomer,
-  customerNotifications,
-  customerNotificationsLoading,
-  customerNotificationsError,
-  customerNotificationPagination,
-  customerNotificationActionLoadingId,
-  customerNotificationActionMessage,
-  customerNotificationPage,
-  setCustomerNotificationPage,
-  handleMarkNotificationAsRead,
-  customerAppointments,
-  customerAppointmentsLoading,
-  customerAppointmentsError,
-  customerAppointmentPagination,
-  customerAppointmentPage,
-  setCustomerAppointmentPage,
-  customerAppointmentActionLoadingId,
-  customerAppointmentActionError,
-  customerAppointmentActionMessage,
-  refreshCustomerAppointments,
-  handleCustomerAppointmentCancel,
-  handleCustomerAppointmentComplete,
-  hasAppointmentTimeArrived,
-}) {
-  const [selectedAppointmentId, setSelectedAppointmentId] = useState(null)
+const statusOptions = [
+  { value: '', label: 'All statuses' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'confirmed', label: 'Confirmed' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'no_show', label: 'No show' },
+]
 
-  if (!isCustomer) return null
+function clientFilter(rows, params) {
+  return rows.filter(
+    (appointment) =>
+      matchesSearch([appointment.barber?.name, appointment.service?.name, appointment.notes], params.search) &&
+      (!params.status || appointment.status === params.status)
+  )
+}
 
-  function formatDate(value) {
-    if (!value) return '—'
+/** Keep the booking's current barber/service selectable even if now unavailable. */
+function withCurrent(options, current) {
+  if (!current || options.some((option) => option.id === current.id)) return options
+  return [...options, { ...current, is_available: false, is_active: false }]
+}
 
-    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+function MyAppointments() {
+  const location = useLocation()
+  const catalog = useCatalog()
+  const list = useListControls({ status: '' })
+  const { items, meta, loading, error, reload } = usePagedData(appointmentApi.list, list.params, {
+    clientFilter,
+    onEmptyPage: () => list.setPage(list.page - 1),
+  })
 
-    if (match) {
-      const [, year, month, day] = match
-      return new Date(Number(year), Number(month) - 1, Number(day))
-        .toLocaleDateString('en-PH', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        })
+  const [message, flash] = useFlash()
+  const [actionError, setActionError] = useState('')
+  const [details, setDetails] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [confirm, setConfirm] = useState(null) // { type: 'cancel' | 'complete', appointment }
+  const [working, setWorking] = useState(false)
+
+  // Message handed over by the booking page after a successful request.
+  useEffect(() => {
+    if (location.state?.message) flash(location.state.message)
+  }, [location.state, flash])
+
+  async function runConfirmed() {
+    setWorking(true)
+    setActionError('')
+    try {
+      const { type, appointment } = confirm
+      const response = type === 'cancel' ? await appointmentApi.cancel(appointment.id) : await appointmentApi.complete(appointment.id)
+      flash(response.message)
+      setConfirm(null)
+      reload()
+    } catch (err) {
+      setConfirm(null)
+      setActionError(getErrorMessage(err))
+    } finally {
+      setWorking(false)
     }
-
-    const date = new Date(value)
-    return Number.isNaN(date.getTime())
-      ? value
-      : date.toLocaleDateString('en-PH', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        })
   }
 
-  function formatTime(value) {
-    if (!value) return '—'
-
-    const match = /^(\d{1,2}):(\d{2})/.exec(value)
-    if (!match) return value
-
-    const hours = Number(match[1])
-    const minutes = Number(match[2])
-
-    if (hours > 23 || minutes > 59) return value
-
-    const date = new Date()
-    date.setHours(hours, minutes, 0, 0)
-
-    return date.toLocaleTimeString('en-PH', {
-      hour: 'numeric',
-      minute: '2-digit',
+  async function handleEdit(values) {
+    const response = await appointmentApi.update(editing.id, {
+      service_id: Number(values.service_id),
+      barber_id: Number(values.barber_id),
+      appointment_date: values.appointment_date,
+      appointment_time: values.appointment_time,
+      notes: values.notes.trim() || null,
     })
+    setEditing(null)
+    flash(response.message)
+    reload()
   }
 
-  function formatStatus(value) {
-    if (!value) return '—'
+  const columns = [
+    {
+      key: 'barber',
+      header: 'Barber',
+      render: (row) => (
+        <>
+          {row.barber?.name ?? '—'}
+          {row.barber && !row.barber.is_available && ['pending', 'confirmed'].includes(row.status) && (
+            <small className="cell-warning">Barber currently unavailable</small>
+          )}
+        </>
+      ),
+    },
+    { key: 'service', header: 'Service', render: (row) => row.service?.name ?? '—' },
+    { key: 'price', header: 'Price', render: (row) => (row.service?.price != null ? formatPrice(row.service.price) : '—') },
+    { key: 'date', header: 'Date', className: 'cell-nowrap', render: (row) => formatDate(row.appointment_date) },
+    { key: 'time', header: 'Time', className: 'cell-nowrap', render: (row) => formatTime(row.appointment_time) },
+    { key: 'status', header: 'Status', render: (row) => <StatusBadge status={row.status} /> },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (row) => (
+        <div className="row-actions">
+          <Button variant="secondary" size="sm" onClick={() => setDetails(row)}>
+            Details
+          </Button>
+          {row.status === 'pending' && (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setEditing(row)}>
+                Edit
+              </Button>
+              <Button variant="danger" size="sm" onClick={() => setConfirm({ type: 'cancel', appointment: row })}>
+                Cancel
+              </Button>
+            </>
+          )}
+          {row.status === 'confirmed' && hasAppointmentTimeArrived(row) && (
+            <Button size="sm" onClick={() => setConfirm({ type: 'complete', appointment: row })}>
+              Mark as done
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ]
 
-    return value
-      .split('_')
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-  }
-
-  const actionButtonStyle = {
-    padding: '7px 10px',
-    margin: '2px 4px 4px 0',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    backgroundColor: '#ffffff',
-    color: '#222222',
-    cursor: 'pointer',
-    fontSize: '12px',
-    fontWeight: '700',
-    whiteSpace: 'nowrap',
-  }
+  const isCancel = confirm?.type === 'cancel'
 
   return (
-    <>
-      <section
-        className="section admin-table-section"
-        id="customer-notifications"
-      >
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">UPDATES</p>
-            <h2>Your Notifications</h2>
-            <p>Stay informed about changes to your appointments.</p>
-          </div>
+    <section className="section" id="my-appointments">
+      <div className="section-heading">
+        <div>
+          <h2>My appointments</h2>
+          <p className="section-description">Review your bookings, edit pending ones, and check their status.</p>
         </div>
+        <Button variant="secondary" size="sm" onClick={reload} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </Button>
+      </div>
 
-        {customerNotificationsError && (
-          <p className="error-message" role="alert">
-            {customerNotificationsError}
-          </p>
+      <Alert type="success" onDismiss={() => flash('')}>
+        {message}
+      </Alert>
+      <Alert type="error" onDismiss={() => setActionError('')}>
+        {actionError || error}
+      </Alert>
+
+      <SearchToolbar
+        search={list.search}
+        onSearchChange={list.setSearch}
+        placeholder="Search by barber or service..."
+        filters={[{ name: 'status', label: 'Status', value: list.filters.status, options: statusOptions }]}
+        onFilterChange={list.setFilter}
+        onReset={list.reset}
+        hasActiveFilters={list.hasActiveFilters}
+      />
+
+      <DataTable
+        columns={columns}
+        rows={items}
+        loading={loading}
+        emptyTitle="No appointments found"
+        emptyMessage={list.hasActiveFilters ? 'Try changing your search or filters.' : 'Book your first appointment from the Book page.'}
+        caption="Your appointments"
+      />
+      <Pagination meta={meta} onPageChange={list.setPage} disabled={loading} />
+
+      <Modal open={Boolean(details)} title="Appointment details" onClose={() => setDetails(null)} footer={<Button variant="secondary" onClick={() => setDetails(null)}>Close</Button>}>
+        {details && <AppointmentDetails appointment={details} />}
+      </Modal>
+
+      <Modal open={Boolean(editing)} title="Edit appointment" onClose={() => setEditing(null)} dismissible>
+        {editing && (
+          <AppointmentForm
+            initialValues={{
+              service_id: String(editing.service_id ?? editing.service?.id ?? ''),
+              barber_id: String(editing.barber_id ?? editing.barber?.id ?? ''),
+              appointment_date: toDateInput(editing.appointment_date),
+              appointment_time: toTimeInput(editing.appointment_time),
+              notes: editing.notes ?? '',
+            }}
+            services={withCurrent(catalog.services.filter((service) => service.is_active), editing.service)}
+            barbers={withCurrent(catalog.barbers.filter((barber) => barber.is_available), editing.barber)}
+            submitLabel="Save changes"
+            onSubmit={handleEdit}
+            onCancel={() => setEditing(null)}
+          />
         )}
+      </Modal>
 
-        {customerNotificationActionMessage && (
-          <output className="success-message" style={{ display: 'block' }}>
-            {customerNotificationActionMessage}
-          </output>
-        )}
-
-        {customerNotificationsLoading &&
-          customerNotifications.length === 0 && (
-            <p>Loading your notifications...</p>
-          )}
-
-        {!customerNotificationsLoading &&
-          customerNotifications.length === 0 && (
-            <p>
-              You have no notifications right now. If an administrator sends
-              you a notice, it will appear here.
-            </p>
-          )}
-
-        {customerNotifications.length > 0 && (
-          <>
-            <div style={{ display: 'grid', gap: '14px' }}>
-              {customerNotifications.map((notification) => {
-                const unread = !notification.read_at
-                const updating =
-                  customerNotificationActionLoadingId === notification.id
-
-                return (
-                  <article
-                    key={notification.id}
-                    style={{
-                      padding: '18px',
-                      border: unread
-                        ? '1px solid #f59e0b'
-                        : '1px solid #e5e7eb',
-                      borderLeft: unread
-                        ? '4px solid #d97706'
-                        : '4px solid #9ca3af',
-                      borderRadius: '8px',
-                      backgroundColor: unread ? '#fffbeb' : '#ffffff',
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: '12px',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <strong>
-                        {notification.title || 'Appointment Notification'}
-                      </strong>
-                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                        {unread ? 'Unread' : 'Read'}
-                      </span>
-                    </div>
-
-                    <p style={{ marginTop: '10px' }}>
-                      {notification.message ||
-                        notification.data?.message ||
-                        'There is an update to your appointment.'}
-                    </p>
-
-                    {notification.appointment && (
-                      <p style={{ fontSize: '13px', color: '#4b5563' }}>
-                        Appointment with{' '}
-                        {notification.appointment.barber?.name || 'your barber'}
-                      </p>
-                    )}
-
-                    {unread && (
-                      <button
-                        type="button"
-                        style={actionButtonStyle}
-                        disabled={
-                          customerNotificationActionLoadingId !== null
-                        }
-                        onClick={() =>
-                          handleMarkNotificationAsRead(notification)
-                        }
-                      >
-                        {updating ? 'Marking...' : 'Mark as Read'}
-                      </button>
-                    )}
-                  </article>
-                )
-              })}
-            </div>
-
-            {customerNotificationPagination && (
-              <div className="pagination-controls">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCustomerNotificationPage((page) =>
-                      Math.max(1, page - 1)
-                    )
-                  }
-                  disabled={
-                    customerNotificationPagination.current_page <= 1 ||
-                    customerNotificationsLoading
-                  }
-                >
-                  Previous
-                </button>
-
-                <span>
-                  Page {customerNotificationPagination.current_page} of{' '}
-                  {customerNotificationPagination.last_page}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCustomerNotificationPage((page) =>
-                      Math.min(
-                        customerNotificationPagination.last_page,
-                        page + 1
-                      )
-                    )
-                  }
-                  disabled={
-                    customerNotificationPagination.current_page >=
-                      customerNotificationPagination.last_page ||
-                    customerNotificationsLoading
-                  }
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-
-      <section
-        className="section admin-table-section"
-        id="my-appointments"
-      >
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">YOUR BOOKINGS</p>
-            <h2>My Appointments</h2>
-            <p>Review your bookings and check their current status.</p>
-          </div>
-
-          <button
-            className="nav-button"
-            type="button"
-            onClick={() => refreshCustomerAppointments()}
-            disabled={customerAppointmentsLoading}
-          >
-            {customerAppointmentsLoading ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-
-        {customerAppointmentsError && (
-          <p className="error-message" role="alert">
-            {customerAppointmentsError}
-          </p>
-        )}
-
-        {customerAppointmentActionError && (
-          <p className="error-message" role="alert">
-            {customerAppointmentActionError}
-          </p>
-        )}
-
-        {customerAppointmentActionMessage && (
-          <output className="success-message" style={{ display: 'block' }}>
-            {customerAppointmentActionMessage}
-          </output>
-        )}
-
-        {customerAppointmentsLoading &&
-          customerAppointments.length === 0 && (
-            <p>Loading your appointments...</p>
-          )}
-
-        {customerAppointments.length > 0 && (
-          <>
-            <div className="admin-table-wrapper">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Barber</th>
-                    <th>Service</th>
-                    <th>Price</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Status</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {customerAppointments.map((appointment) => {
-                    const canCancel = appointment.status === 'pending'
-                    const updating =
-                      customerAppointmentActionLoadingId === appointment.id
-
-                    const barberUnavailable =
-                      appointment.barber?.is_available === false
-
-                    return (
-                      <tr key={appointment.id}>
-                        <td>
-                          <div>{appointment.barber?.name || '—'}</div>
-
-                          {barberUnavailable && (
-                            <div
-                              role="status"
-                              style={{
-                                marginTop: '8px',
-                                padding: '10px',
-                                border: '1px solid #f59e0b',
-                                borderRadius: '6px',
-                                backgroundColor: '#fffbeb',
-                                color: '#92400e',
-                                fontSize: '12px',
-                                lineHeight: 1.5,
-                                minWidth: '220px',
-                                whiteSpace: 'normal',
-                              }}
-                            >
-                              <strong>Barber Availability Notice</strong>
-                              <p style={{ margin: '5px 0 0' }}>
-                                {appointment.barber?.name || 'Your barber'} is
-                                currently unavailable. Your appointment remains
-                                recorded as {formatStatus(appointment.status)}.
-                                Please contact the shop to confirm whether it
-                                will proceed or needs to be rescheduled.
-                              </p>
-                            </div>
-                          )}
-                        </td>
-
-                        <td>{appointment.service?.name || '—'}</td>
-                        <td>
-                          {appointment.service?.price != null
-                            ? `₱${Number(
-                                appointment.service.price
-                              ).toFixed(2)}`
-                            : '—'}
-                        </td>
-                        <td>{formatDate(appointment.appointment_date)}</td>
-                        <td>{formatTime(appointment.appointment_time)}</td>
-                        <td>
-                          <span className="appointment-status">
-                            {formatStatus(appointment.status)}
-                          </span>
-                        </td>
-                        <td>
-                          {canCancel && (
-                            <button
-                              type="button"
-                              style={actionButtonStyle}
-                              disabled={
-                                customerAppointmentActionLoadingId !== null
-                              }
-                              onClick={() =>
-                                handleCustomerAppointmentCancel(appointment)
-                              }
-                            >
-                              {updating ? 'Cancelling...' : 'Cancel Appointment'}
-                            </button>
-                          )}
-
-                          {!canCancel && (
-                            <span
-                              style={{
-                                color: '#6b7280',
-                                fontSize: '12px',
-                              }}
-                            >
-                              No actions available
-                            </span>
-                          )}
-
-                          <button type="button" style={actionButtonStyle}
-                            aria-expanded={selectedAppointmentId === appointment.id}
-                            onClick={() => setSelectedAppointmentId((current) => current === appointment.id ? null : appointment.id)}>
-                            {selectedAppointmentId === appointment.id ? 'Hide Details' : 'View Details'}
-                          </button>
-                          {selectedAppointmentId === appointment.id && (
-                            <div style={{ marginTop: '8px', padding: '10px', minWidth: '180px', maxWidth: '300px', whiteSpace: 'normal', overflowWrap: 'anywhere', border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#f9fafb', lineHeight: 1.5 }}>
-                              <strong>Additional Notes</strong>
-                              <p style={{ margin: '5px 0 0' }}>{typeof appointment.notes === 'string' && appointment.notes.trim() ? appointment.notes : 'No additional notes.'}</p>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {customerAppointmentPagination && (
-              <div className="pagination-controls">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCustomerAppointmentPage((page) =>
-                      Math.max(1, page - 1)
-                    )
-                  }
-                  disabled={
-                    customerAppointmentPagination.current_page <= 1 ||
-                    customerAppointmentsLoading
-                  }
-                >
-                  Previous
-                </button>
-
-                <span>
-                  Page {customerAppointmentPagination.current_page} of{' '}
-                  {customerAppointmentPagination.last_page}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCustomerAppointmentPage((page) =>
-                      Math.min(
-                        customerAppointmentPagination.last_page,
-                        page + 1
-                      )
-                    )
-                  }
-                  disabled={
-                    customerAppointmentPagination.current_page >=
-                      customerAppointmentPagination.last_page ||
-                    customerAppointmentsLoading
-                  }
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </>
-        )}
-
-        {!customerAppointmentsLoading &&
-          customerAppointments.length === 0 && (
-            <p>
-              You have no appointments yet. Book an appointment and it will
-              appear here.
-            </p>
-          )}
-      </section>
-    </>
+      <ConfirmDialog
+        open={Boolean(confirm)}
+        title={isCancel ? 'Cancel this appointment?' : 'Mark as done?'}
+        message={
+          isCancel
+            ? 'This will cancel your pending appointment. You can book a new one at any time.'
+            : 'Confirm that this appointment has taken place.'
+        }
+        confirmLabel={isCancel ? 'Yes, cancel it' : 'Yes, mark as done'}
+        danger={isCancel}
+        loading={working}
+        onConfirm={runConfirmed}
+        onCancel={() => setConfirm(null)}
+      />
+    </section>
   )
 }
 

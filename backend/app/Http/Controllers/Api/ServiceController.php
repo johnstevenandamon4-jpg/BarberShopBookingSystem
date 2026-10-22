@@ -3,32 +3,42 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreServiceRequest;
+use App\Http\Requests\UpdateServiceRequest;
 use App\Models\Service;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class ServiceController extends Controller
 {
-   public function index(): JsonResponse
+    /**
+     * GET /api/services?search=&active=1|0&page=
+     */
+    public function index(Request $request): JsonResponse
     {
+        $search = trim((string) $request->query('search', ''));
+
         $services = Service::query()
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($query) use ($search) {
+                    $query->where('name', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%");
+                });
+            })
+            ->when(
+                $request->filled('active'),
+                fn ($query) => $query->where('is_active', $request->boolean('active'))
+            )
             ->latest()
-            ->paginate(3);
+            ->paginate(3)
+            ->withQueryString();
 
         return response()->json($services);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreServiceRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'price' => ['required', 'numeric', 'min:0'],
-            'duration_minutes' => ['required', 'integer', 'min:1'],
-            'is_active' => ['sometimes', 'boolean'],
-        ]);
-
-        $service = Service::create($validated);
+        $service = Service::create($request->validated());
 
         return response()->json([
             'message' => 'Service created successfully.',
@@ -43,17 +53,9 @@ class ServiceController extends Controller
         ]);
     }
 
-    public function update(Request $request, Service $service): JsonResponse
+    public function update(UpdateServiceRequest $request, Service $service): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => ['sometimes', 'required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'price' => ['sometimes', 'required', 'numeric', 'min:0'],
-            'duration_minutes' => ['sometimes', 'required', 'integer', 'min:1'],
-            'is_active' => ['sometimes', 'boolean'],
-        ]);
-
-        $service->update($validated);
+        $service->update($request->validated());
 
         return response()->json([
             'message' => 'Service updated successfully.',
@@ -68,4 +70,3 @@ class ServiceController extends Controller
         return response()->json(null, 204);
     }
 }
-
