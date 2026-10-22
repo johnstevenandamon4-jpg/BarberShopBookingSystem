@@ -1,9 +1,5 @@
 # BarberBook: Barber Shop Appointment System
 
-**Developer:** `[Your Full Name]`  **Course:** Course 4, React Fundamentals with Laravel as Backend (Final Hands-On Exam: Mini Capstone)
-**Presentation slides:** `[paste your PPT / PDF link here]` · **Demo video (5–8 min):** `[paste video link here]`
-**Approved proposal:** [`docs/Project-Proposal.docx`](docs/Project-Proposal.docx) · **Proposal vs. delivered system:** [`docs/PROPOSAL-ALIGNMENT.md`](docs/PROPOSAL-ALIGNMENT.md)
-
 BarberBook is a full-stack web app that lets a small barber shop take bookings online instead of by phone or walk-in.
 Customers browse services and barbers, request an appointment, and follow its status. The shop administrator confirms,
 completes or cancels bookings, manages barbers and services, and sees booking statistics on a dashboard.
