@@ -69,7 +69,7 @@ export function getAdminActions(appointment) {
   if (appointment.status === 'pending') {
     return [
       { label: 'Confirm', status: 'confirmed', variant: 'primary' },
-      { label: 'Cancel', status: 'cancelled', variant: 'danger' },
+      { label: 'Reject', status: 'cancelled', variant: 'danger' },
     ]
   }
   if (appointment.status === 'confirmed') {

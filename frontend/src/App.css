@@ -1543,3 +1543,13 @@ body {
 @media (max-width: 640px) {
   .app .dashboard-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.app .toolbar-date { flex: 0 1 170px; }
+.app .subsection-title { margin: 28px 0 14px; font-size: 1.5rem; }
+.app .customer-summary { margin-bottom: 36px; }
+.app .customer-summary .dashboard-summary-grid { margin-bottom: 0; }
+
+/* Breathing room on the home page */
+.app .home-page .account-panel { margin-bottom: 32px; }
+.app .home-page .hero { margin-bottom: 44px; }
+.app .home-page .customer-summary { margin-bottom: 44px; }

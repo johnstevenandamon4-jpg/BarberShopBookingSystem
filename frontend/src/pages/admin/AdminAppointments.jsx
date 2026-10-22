@@ -14,7 +14,7 @@ import usePagedData from '../../hooks/usePagedData'
 import { getErrorMessage } from '../../services/api'
 import { appointmentApi } from '../../services/appointmentApi'
 import { matchesSearch } from '../../utils/filters'
-import { formatDate, formatStatus, formatTime, getAdminActions } from '../../utils/format'
+import { formatDate, formatStatus, formatTime, getAdminActions, toDateInput } from '../../utils/format'
 
 const statusOptions = [
   { value: '', label: 'All statuses' },
@@ -31,12 +31,14 @@ function clientFilter(rows, params) {
       matchesSearch(
         [appointment.customer?.name, appointment.customer?.email, appointment.barber?.name, appointment.service?.name],
         params.search
-      ) && (!params.status || appointment.status === params.status)
+      ) &&
+      (!params.status || appointment.status === params.status) &&
+      (!params.date || toDateInput(appointment.appointment_date) === params.date)
   )
 }
 
 function AdminAppointments() {
-  const list = useListControls({ status: '' })
+  const list = useListControls({ status: '', date: '' })
   const { items, meta, loading, error, reload } = usePagedData(appointmentApi.list, list.params, {
     clientFilter,
     onEmptyPage: () => list.setPage(list.page - 1),
@@ -126,6 +128,7 @@ function AdminAppointments() {
         onSearchChange={list.setSearch}
         placeholder="Search customer, barber or service..."
         filters={[{ name: 'status', label: 'Status', value: list.filters.status, options: statusOptions }]}
+        dates={[{ name: 'date', label: 'Appointment date', value: list.filters.date }]}
         onFilterChange={list.setFilter}
         onReset={list.reset}
         hasActiveFilters={list.hasActiveFilters}

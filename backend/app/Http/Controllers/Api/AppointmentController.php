@@ -39,6 +39,11 @@ class AppointmentController extends Controller
                 $request->filled('status'),
                 fn ($query) => $query->where('status', $request->query('status'))
             )
+            // Filter: ?date=YYYY-MM-DD (appointments on that day)
+            ->when(
+                $request->filled('date'),
+                fn ($query) => $query->whereDate('appointment_date', $request->query('date'))
+            )
             // Search: customer name/email, barber name or service name
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($query) use ($search) {

@@ -32,7 +32,8 @@ function clientFilter(rows, params) {
   return rows.filter(
     (appointment) =>
       matchesSearch([appointment.barber?.name, appointment.service?.name, appointment.notes], params.search) &&
-      (!params.status || appointment.status === params.status)
+      (!params.status || appointment.status === params.status) &&
+      (!params.date || toDateInput(appointment.appointment_date) === params.date)
   )
 }
 
@@ -45,7 +46,7 @@ function withCurrent(options, current) {
 function MyAppointments() {
   const location = useLocation()
   const catalog = useCatalog()
-  const list = useListControls({ status: '' })
+  const list = useListControls({ status: '', date: '' })
   const { items, meta, loading, error, reload } = usePagedData(appointmentApi.list, list.params, {
     clientFilter,
     onEmptyPage: () => list.setPage(list.page - 1),
@@ -165,6 +166,7 @@ function MyAppointments() {
         onSearchChange={list.setSearch}
         placeholder="Search by barber or service..."
         filters={[{ name: 'status', label: 'Status', value: list.filters.status, options: statusOptions }]}
+        dates={[{ name: 'date', label: 'Appointment date', value: list.filters.date }]}
         onFilterChange={list.setFilter}
         onReset={list.reset}
         hasActiveFilters={list.hasActiveFilters}

@@ -1,4 +1,8 @@
-# BarberBook: Barber Shop Booking System
+# BarberBook: Barber Shop Appointment System
+
+**Developer:** `[Your Full Name]`  **Course:** Course 4, React Fundamentals with Laravel as Backend (Final Hands-On Exam: Mini Capstone)
+**Presentation slides:** `[paste your PPT / PDF link here]` · **Demo video (5–8 min):** `[paste video link here]`
+**Approved proposal:** [`docs/Project-Proposal.docx`](docs/Project-Proposal.docx) · **Proposal vs. delivered system:** [`docs/PROPOSAL-ALIGNMENT.md`](docs/PROPOSAL-ALIGNMENT.md)
 
 BarberBook is a full-stack web app that lets a small barber shop take bookings online instead of by phone or walk-in.
 Customers browse services and barbers, request an appointment, and follow its status. The shop administrator confirms,
@@ -10,8 +14,8 @@ completes or cancels bookings, manages barbers and services, and sees booking st
 
 | | |
 |---|---|
-| **Client** | A small neighbourhood barber shop with several barbers |
-| **Problem today** | Bookings are taken by phone and walk-in, so slots get double-booked, customers forget their appointments, and the owner has no record of how busy each barber is. |
+| **Client** | A local barber shop: `[write the real shop name here once confirmed with the owner]` |
+| **Problem today** | Appointments handled through walk-ins, phone calls and chat messages are hard to manage. Customers may arrive late or not show up, which leaves gaps in the barber's schedule and wastes slots. |
 | **Goal** | One system where customers request a slot, the shop confirms it, and both sides can see the status at any time. |
 
 ## 2. User roles
@@ -29,9 +33,9 @@ completes or cancels bookings, manages barbers and services, and sees booking st
 | 1 | Authentication (register, login, logout, current user, Sanctum token in `Authorization: Bearer`) | `AuthController` · `frontend/src/context/AuthContext.jsx` · `services/api.js` |
 | 2 | Role-based access (hidden in React **and** blocked in Laravel) | `admin` middleware + checks in `AppointmentController` · `components/RouteGuards.jsx` |
 | 3 | Full CRUD on ≥ 2 related resources | **Barbers** and **Services** (admin CRUD) and **Appointments** (create, view, edit, cancel). `appointments` belongs to users, barbers and services. |
-| 4 | Search and filter | Services (`search`, `active`), Barbers (`search`, `available`), Appointments (`search`, `status`) |
+| 4 | Search and filter | Services (`search`, `active`), Barbers (`search`, `available`), Appointments (`search`, `status`, `date`) |
 | 5 | Pagination from the API | Laravel `paginate()` on barbers, services, appointments and notifications, shown by `components/Pagination.jsx` |
-| 6 | Dashboard with ≥ 3 figures | 6 figures (total, pending, confirmed, completed, cancelled, no-show) + 2 bar charts |
+| 6 | Dashboard with ≥ 3 figures | Admin: 6 figures + 2 bar charts. Customer: upcoming / pending / completed + upcoming appointments |
 | 7 | Validation on both sides | React: `utils/validators.js` with `useForm`. Laravel: Form Request classes. 422 errors are shown **under the matching field**. |
 | 8 | User feedback | Loading states, success/error banners, empty states, confirm dialogs before cancel / delete / status change |
 | 9 | Status workflow | `pending → confirmed → completed`, or `cancelled` / `no_show`, changed by the proper role |
@@ -54,20 +58,29 @@ barberbook/                      ← repository root
 ├── README.md                    ← this file
 ├── backend/                     ← Laravel REST API
 ├── frontend/                    ← React single-page app
-    ├── package.json
-    ├── .env.example
-    └── src/
-        ├── App.jsx              ← route map (public / customer / admin)
-        ├── main.jsx
-        ├── App.css              ← theme + component styles
-        ├── services/            ← api.js (Axios instance + token + 401 handling) and one file per resource
-        ├── context/             ← AuthContext (login state shared app-wide)
-        ├── hooks/               ← useForm, usePagedData, useListControls, useCatalog, ...
-        ├── components/          ← Button, FormInput, Modal, ConfirmDialog, DataTable, Pagination, ...
-        ├── pages/               ← Home, Services, Barbers, Book, MyAppointments, Notifications, Login, Register
-        │   └── admin/           ← AdminDashboard, AdminAppointments, AdminBarbers, AdminServices
-        └── utils/               ← validators, formatters, filters
-
+│   ├── package.json
+│   ├── .env.example
+│   └── src/
+│       ├── App.jsx              ← route map (public / customer / admin)
+│       ├── main.jsx
+│       ├── App.css              ← theme + component styles
+│       ├── services/            ← api.js (Axios instance + token + 401 handling) and one file per resource
+│       ├── context/             ← AuthContext (login state shared app-wide)
+│       ├── hooks/               ← useForm, usePagedData, useListControls, useCatalog, ...
+│       ├── components/          ← Button, FormInput, Modal, ConfirmDialog, DataTable, Pagination, ...
+│       ├── pages/               ← Home, Services, Barbers, Book, MyAppointments, Notifications, Login, Register
+│       │   └── admin/           ← AdminDashboard, AdminAppointments, AdminBarbers, AdminServices
+│       └── utils/               ← validators, formatters, filters
+└── docs/
+    ├── ERD.png / ERD.svg / ERD.md
+    ├── API.md
+    ├── postman/BarberBook.postman_collection.json
+    ├── wireframes/              ← 8 key pages (PNG + SVG)
+    ├── screenshots/             ← real screenshots (see SCREENSHOTS-GUIDE.md)
+    ├── REQUIREMENTS-CHECKLIST.md
+    ├── DEMO-SCRIPT.md
+    └── BarberBook-slides.pdf    ← presentation slides (export your PPT to PDF)
+```
 
 ## 6. Setup (works on a fresh clone)
 
@@ -101,8 +114,8 @@ npm run dev                # app runs at http://localhost:5173
 
 | Role | Email | Password |
 |---|---|---|
-| Administrator | `admin@barbershop.test` | `Admin12345!` |
-| Customer | `customer1@barbershop.test` … `customer5@barbershop.test` | `Customer123!` |
+| Administrator | `admin@gmail.com` | `Admin12345!` |
+| Customer | `customer1@gmail.com` … `customer5@gmail.com` | `Customer12345!` |
 
 The login page also has **Fill admin / Fill customer** buttons for quick demos.
 
@@ -127,10 +140,13 @@ See [`docs/API.md`](docs/API.md) for the endpoint table and import
 [`docs/postman/BarberBook.postman_collection.json`](docs/postman/BarberBook.postman_collection.json) into Postman
 (run **Login (admin)** or **Login (customer)** first; the token is saved automatically).
 
-## 10. Delivered features vs. the original proposal, known limitations, Phase 2
+## 10. Delivered features vs. the approved proposal, known limitations, Phase 2
 
-* **Known limitations:** a barber or service that already has appointments cannot be deleted (the database protects the history). Mark them *unavailable/inactive* instead. Notifications are in-app only.
-* **Phase 2 ideas:** e-mail / SMS reminders, barber working-hours and slot picker, customer reviews, online payment, PDF/CSV export of bookings, deployment.
+Full comparison: [`docs/PROPOSAL-ALIGNMENT.md`](docs/PROPOSAL-ALIGNMENT.md).
+
+* **Delivered:** every planned feature of the approved proposal (registration/login, role-based access, service and barber listings, booking, status tracking, staff management, search and filtering, conflict validation, no-show tracking, cancellation and rescheduling, dashboards, validation).
+* **Known limitations:** no *Forgot password*; the customer types a time instead of choosing from available-slot buttons; conflicts are checked for the same barber at the same start time only; a barber or service that already has appointments cannot be deleted (mark it unavailable/inactive instead); notifications are in-app only.
+* **Phase 2 ideas:** e-mail / SMS reminders, forgot password, barber working days with an available-slot picker, overlap checking by service duration, online payment, PDF/CSV export, deployment.
 
 ## 11. References and AI-use declaration
 

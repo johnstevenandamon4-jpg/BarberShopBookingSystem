@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import BarberPole from '../components/BarberPole'
+import CustomerSummary from '../components/CustomerSummary'
 import { useAuth } from '../context/AuthContext'
 
 const steps = [
@@ -28,6 +29,8 @@ function Home() {
           <span className="role-badge role-customer">Customer</span>
         </section>
       )}
+
+      {isCustomer && <CustomerSummary />}
 
       <section className="hero">
         <div className="hero-content">
