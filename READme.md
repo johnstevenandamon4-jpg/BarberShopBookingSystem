@@ -115,6 +115,18 @@ npm run dev                # app runs at http://localhost:5173
 
 The login page also has **Fill admin / Fill customer** buttons for quick demos.
 
+# Demo Accounts for Testing
+
+Use the following credentials to test the system (pre-configured in the database):
+
+* **Administrator Account**
+  * **Email**: `admin@gmail.com`
+  * **Password**: `Admin12345!`
+
+* **Customer Accounts**
+  * **Email**: `customer1@gmail.com`, `customer2@gmail.com`, etc. (sequentially numbered)
+  * **Password**: `Customer12345!`
+
 ## 8. How the pieces connect
 
 ```
